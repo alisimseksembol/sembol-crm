@@ -1270,6 +1270,29 @@ import { getFirestore, initializeFirestore, persistentLocalCache, persistentMult
         const paraf = `<div style="display:flex;justify-content:space-between;font-size:9px;color:#555;border-bottom:1px dashed #bbb;padding-bottom:3px;margin-bottom:6px;"><span>Gizlilik ve Ticari Sırların Korunması Sözleşmesi</span><span>İşveren Paraf: ................ &nbsp; Personel Paraf: ................</span></div>`;
         const md = (b) => `<div class="section-title" style="color:#111;margin-top:10px;">${b}</div>`;
         const pr = (t) => `<div class="paragraph" style="text-align:justify;">${t}</div>`;
+        // ------------------------------------------------------------------
+        // İMZA BLOĞU — HER İKİ SAYFANIN ALTINDA (kullanıcı talebi)
+        // Belge iki sayfaya yayılıyor; yalnızca son sayfada imza olması, ilk
+        // sayfanın sonradan değiştirilmesi iddiasına açık kapı bırakır. Bu
+        // yüzden her sayfanın altında İşveren / Personel imza alanı bulunur.
+        // DEĞİŞTİ (kullanıcı talebi): "Okudum, anladım" el yazısı satırı ve
+        // kutusu KALDIRILDI — imza bloğu yalnızca kaşe/imza alanlarından oluşur.
+        // Sayfa kırılımı Madde 5'ten sonra ZORLA yapılır ki ilk sayfada imza
+        // bloğuna yer kalsın ve maddeler bölünmesin.
+        // ------------------------------------------------------------------
+        const imzaBlogu = () => `
+        <table style="margin-top:14px;">
+          <tr>
+            <td style="width:50%;vertical-align:top;">
+              <b>İŞVEREN</b><br/>Sembol Nakliyat Depoculuk Tic. Ltd. Şti.<br/><span style="font-size:9px;">(Sembol Nakliyat &amp; Depoevim)</span><br/><br/>Kaşe / Yetkili İmza:<br/><br/><br/>
+            </td>
+            <td style="width:50%;vertical-align:top;">
+              <b>PERSONEL</b><br/>Ad Soyad: <b>${ad}</b><br/>T.C. No: ${tc}<br/><br/>İmza:<br/><br/><br/>
+            </td>
+          </tr>
+        </table>`;
+        // Yeni sayfa: yazdırmada zorunlu kırılım + üstte paraf satırı tekrar
+        const yeniSayfa = `<div style="page-break-before:always;break-before:page;height:0;"></div>${paraf}`;
         return `
         ${paraf}
         <div class="main-title">GİZLİLİK VE TİCARİ SIRLARIN KORUNMASI SÖZLEŞMESİ</div>
@@ -1307,6 +1330,9 @@ import { getFirestore, initializeFirestore, persistentLocalCache, persistentMult
         ${md('MADDE 5 — BELGE VE MATERYALLERİN İADESİ')}
         ${pr(`<b>5.1.</b> İş ilişkisinin sona ermesi hâlinde Personel; portföy defteri, not defterleri, müşteri ve iş ortağı listeleri, kartvizitler, fiyat listeleri, sözleşme ve protokol örnekleri, kendisine tahsis edilen telefon, hat, cihaz ve bunlardaki kayıtlar dâhil Gizli Bilgi içeren her türlü belge ve materyali en geç ayrılış günü eksiksiz olarak İşveren'e iade edecek; hiçbir kopya, suret veya kayıt alıkoymayacaktır. CRM ve kurumsal hesap erişimleri aynı gün İşveren'ce kapatılır.`)}
 
+        ${imzaBlogu()}
+        ${yeniSayfa}
+
         ${md('MADDE 6 — İŞ SÜRESİNCE SADAKAT VE İŞ AKTARMAMA YASAĞI')}
         ${pr(`<b>6.1.</b> Personel, iş ilişkisi devam ettiği sürece 6098 sayılı TBK m. 396 uyarınca İşveren'e sadakatle hizmet etmekle yükümlüdür. Bu kapsamda Personel; İşveren'e telefon, WhatsApp, sosyal medya, iş ortağı yönlendirmesi veya saha çalışması yoluyla ulaşan ya da kendisinin görevi sırasında edindiği hiçbir müşteriyi, iş talebini, ekspertizi veya yönlendirmeyi İşveren'in bilgisi ve yazılı onayı olmaksızın başka bir gerçek veya tüzel kişiye, rakip firmaya ya da kendi hesabına aktaramaz, satamaz, yönlendiremez; işi İşveren adına bağlamak yerine kısmen veya tamamen üçüncü kişilere yaptıramaz.`)}
         ${pr(`<b>6.2.</b> Üçüncü firmalarca Personel'e daha yüksek komisyon, prim, pay veya sair menfaat teklif edilmesi bu yasağı ortadan kaldırmaz. Personel, bu tür bir teklif aldığında durumu derhâl İşveren'e bildirmekle yükümlüdür. Yasağa aykırı iş aktarımı karşılığında doğrudan veya dolaylı olarak elde edilen her türlü komisyon ve menfaat İşveren'e aittir; Personel bunları derhâl ve nakden İşveren'e iade eder.`)}
@@ -1336,20 +1362,7 @@ import { getFirestore, initializeFirestore, persistentLocalCache, persistentMult
         ${pr(`İşbu Sözleşme 10 (on) maddeden ibaret olup <b>${tarih}</b> tarihinde 2 (iki) nüsha olarak düzenlenmiş, taraflarca okunup her sayfası paraflanarak imza altına alınmış ve bir nüshası Personel'e teslim edilmiştir.`)}
         ${f.note ? `<div class="section-title">Ek Açıklama</div><div class="desc-box">${f.note}</div>` : ''}
 
-        <div class="section-title" style="color:#111;">Personel'in el yazısı ile: "Okudum, anladım, bir nüshasını teslim aldım."</div>
-        <div class="desc-box" style="min-height:40px;">................................................................................................................................................................................</div>
-
-        <table style="margin-top:10px;">
-          <tr>
-            <td style="width:50%;vertical-align:top;">
-              <b>İŞVEREN</b><br/>Sembol Nakliyat Depoculuk Tic. Ltd. Şti.<br/><span style="font-size:9px;">(Sembol Nakliyat &amp; Depoevim)</span><br/><br/>Kaşe / Yetkili İmza:<br/><br/><br/>
-            </td>
-            <td style="width:50%;vertical-align:top;">
-              <b>PERSONEL</b><br/>Ad Soyad: <b>${ad}</b><br/>T.C. No: ${tc}<br/><br/>İmza:<br/><br/><br/>
-            </td>
-          </tr>
-        </table>
-        <p class="note">Bilgilendirme: Bu belge, 6098 s. TBK, 4857 s. İş Kanunu, 6698 s. KVKK, 6102 s. TTK ve 5237 s. TCK'nın ilgili hükümleri gözetilerek hazırlanmış bir taslaktır. İmzalatılmadan önce cezai şart tutarının belirlenmesi ve rekabet yasağı kapsamının somut duruma uygunluğu bakımından bir avukata inceletilmesi tavsiye olunur.</p>
+        ${imzaBlogu()}
       `;
       }
     }
