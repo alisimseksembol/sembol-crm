@@ -4922,17 +4922,29 @@ const PersonelBorcHucresi = ({ hamBorc, tahsilEdilen, onDegisim }) => {
     // İşletme defterleri: kredi/ödeme/borçlu planları hariç
     const isletmeDefteriMi = (d) => d && !['Kredi', 'Ödemeler', 'Borçlu'].includes(d.tur);
 
-    // --- 1) Geçerli işlemler (ciro kuralı + işletme defteri) ---
+    // ========================================================================
+    // YENİ (kullanıcı talebi): RAPOR SINIRI — EYLÜL 2026'DAN ÖNCESİ SAYILMAZ
+    // ------------------------------------------------------------------------
+    // Sistemin canlı kullanımı Eylül 2026'da başladı. Ondan önceki bazı
+    // kayıtlar (göç/deneme/düzeltme amaçlı yanlış tarihli girişler) rapor
+    // dönemine sızıp gelir-gider tablosunu ve kâr marjını bozuyordu — "Temmuz
+    // 2026 → bugün" gibi yanlış bir dönem görünüyordu. Rapor artık HER ZAMAN
+    // Eylül 2026'dan başlar; öncesindeki hiçbir işlem hesaba girmez.
+    // ========================================================================
+    const RAPOR_BASLANGIC_SINIRI = '2026-09';
+
+    // --- 1) Geçerli işlemler (ciro kuralı + işletme defteri + tarih sınırı) ---
     const gecerli = (islemler || []).filter(i => {
       const d = defterMap[i.defterId];
       if (!isletmeDefteriMi(d)) return false;
       if (typeof ciroyaGirer === 'function' && !ciroyaGirer(i)) return false;
       if (!i.tarih || !/^\d{4}-\d{2}/.test(i.tarih)) return false;
+      if (i.tarih.slice(0, 7) < RAPOR_BASLANGIC_SINIRI) return false;   // YENİ: Eylül 2026 öncesi sayılmaz
       const tutar = parseFloat(i.tutar) || 0;
       return tutar > 0 && (i.tip === 'giris' || i.tip === 'cikis');
     });
 
-    // --- 2) Başlangıç ayı: verideki en erken ay ---
+    // --- 2) Başlangıç ayı: Eylül 2026 sınırı içinde verideki en erken ay ---
     const ayAnahtarlari = [...new Set(gecerli.map(i => i.tarih.slice(0, 7)))].sort();
     const baslangicAy = ayAnahtarlari[0] || null;
 
@@ -8333,28 +8345,23 @@ const nakitYuvarla = (tutar) => {
                     const buAyAdet = od.buAyAdet + ekSatirlar.length;
                     const buAyOdenenAdet = od.buAyOdenenAdet + ekSatirlar.filter(s => s.odendi).length;
                     const yuzdeOd = buAyToplam > 0 ? Math.round((buAyOdenen / buAyToplam) * 100) : 0;
+                    // ==============================================================
+                    // DEĞİŞTİ (kullanıcı talebi): SADECE TUTAR + "BU AY KALAN"
+                    // ------------------------------------------------------------
+                    // Kart artık KREDİLER satırıyla BİREBİR AYNI boy ve düzen:
+                    // ana rakam + tek etiket satırı + ilerleme çubuğu. "Bu ay
+                    // toplam", "Ödenen" ve gecikmiş satırları KALDIRILDI; o
+                    // ayrıntılar zaten defterin içine girince (Ödemeler
+                    // sayfasında) görülüyor — burada yalnızca özet gerekiyor.
+                    // ==============================================================
                     return (
                       <div className="text-right shrink-0 max-w-[45%] sm:max-w-none sm:min-w-[120px]">
                         <div className={`text-base sm:text-lg font-black tabular-nums ${od.gecikmisAdet > 0 ? 'text-red-600' : 'text-orange-700'}`}>₺{paraFmt(buAyKalan)}</div>
-                        <div className="text-[9px] sm:text-[10px] font-black uppercase text-orange-500 leading-tight">
-                          Bu Ay Kalan{buAyAdet > 0 ? ` • ${buAyAdet - buAyOdenenAdet}/${buAyAdet} ödeme` : ` • ${od.kalemSayisi} kalem`}
-                        </div>
+                        <div className="text-[9px] sm:text-[10px] font-black uppercase text-orange-500 leading-tight">Bu Ay Kalan</div>
                         {buAyAdet > 0 && (
-                          <>
-                            <div className="h-1.5 bg-neutral-100 rounded-full overflow-hidden mt-1">
-                              <div className="h-full bg-orange-500" style={{ width: `${yuzdeOd}%` }}></div>
-                            </div>
-                            {/* Bu ayın TOPLAMI (maaş + avans dahil) ve ödenen kısmı */}
-                            <div className="text-[9px] font-bold text-neutral-500 mt-0.5">
-                              Bu ay toplam: ₺{paraFmt(buAyToplam)}
-                            </div>
-                            <div className="text-[9px] font-bold text-emerald-600">
-                              Ödenen: ₺{paraFmt(buAyOdenen)}
-                            </div>
-                          </>
-                        )}
-                        {od.gecikmisAdet > 0 && (
-                          <div className="text-[9px] font-black text-red-600 mt-0.5">{od.gecikmisAdet} gecikmiş • ₺{paraFmt(od.gecikmisTutar)}</div>
+                          <div className="h-1.5 bg-neutral-100 rounded-full overflow-hidden mt-1">
+                            <div className="h-full bg-orange-500" style={{ width: `${yuzdeOd}%` }}></div>
+                          </div>
                         )}
                       </div>
                     );
