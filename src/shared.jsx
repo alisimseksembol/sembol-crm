@@ -1243,6 +1243,115 @@ import { getFirestore, initializeFirestore, persistentLocalCache, persistentMult
         </table>
         <p class="note">Not: Bu belgenin imzalı aslı personelin özlük dosyasında saklanır; bir nüshası personele teslim edilir. Borç tutarı ve kesinti planı ayrıca Muhasebe kayıtlarına ("Personel Borcu" olarak) işlenmelidir. Ücretten yapılacak kesintilerde 4857 sayılı İş Kanunu'nun ücretin korunmasına ilişkin hükümleri ile asgari geçim sınırı gözetilmelidir; uygulamadan önce mali müşavirinize/hukuk danışmanınıza teyit ettirmeniz önerilir.</p>
       `
+    },
+    // ========================================================================
+    // YENİ (kullanıcı talebi): GİZLİLİK VE TİCARİ SIRLARIN KORUNMASI SÖZLEŞMESİ
+    // ------------------------------------------------------------------------
+    // Kullanıcının verdiği PDF'in metni birebir korunarak şablona alındı.
+    // Personel bilgileri (ad soyad, T.C., adres, pozisyon) sistemden OTOMATİK
+    // dolar; boş kalan alanlar noktalı çizgi olarak kalır. Sözleşme tarihi
+    // tutanak formundaki tarihten gelir. Cezai şart tutarı bilinçli olarak
+    // BOŞ bırakıldı — her personel için hukuk danışmanıyla belirlenmelidir
+    // (PDF'teki uyarı aynen korunmuştur).
+    // Kaynak PDF'te "Saha Pazarlama Personeli" yazıyordu; şablonda bu alan
+    // personelin sistemdeki pozisyonuyla değiştirilir, böylece her personele
+    // uyarlanır. Her sayfanın başındaki paraf satırı ve sonundaki imza bloğu
+    // aynen bırakıldı.
+    // ========================================================================
+    {
+      key: 'gizlilik_sozlesmesi',
+      title: 'Gizlilik ve Ticari Sırların Korunması Sözleşmesi',
+      body: (p, f) => {
+        const ad = p.fullName || '......................................................';
+        const tc = p.tcNo || '................................';
+        const adres = p.address || '..............................................................................................';
+        const gorev = p.position || 'Personel';
+        const tarih = f.date || '....../....../..........';
+        const paraf = `<div style="display:flex;justify-content:space-between;font-size:9px;color:#555;border-bottom:1px dashed #bbb;padding-bottom:3px;margin-bottom:6px;"><span>Gizlilik ve Ticari Sırların Korunması Sözleşmesi</span><span>İşveren Paraf: ................ &nbsp; Personel Paraf: ................</span></div>`;
+        const md = (b) => `<div class="section-title" style="color:#111;margin-top:10px;">${b}</div>`;
+        const pr = (t) => `<div class="paragraph" style="text-align:justify;">${t}</div>`;
+        return `
+        ${paraf}
+        <div class="main-title">GİZLİLİK VE TİCARİ SIRLARIN KORUNMASI SÖZLEŞMESİ</div>
+        <div style="text-align:center;font-size:10px;font-weight:bold;margin:-4px 0 8px;">(Müşteri Ayartmama ve Rekabet Etmeme Taahhüdünü İçerir)</div>
+
+        ${md('MADDE 1 — TARAFLAR')}
+        ${pr(`<b>1.1. İşveren:</b> Bahçelievler Mah. Yeni Sk. Ravza Apt. No: 5 C Pendik / İSTANBUL adresinde mukim, Kartal Vergi Dairesi'ne 7600944287 vergi numarasıyla kayıtlı <b>Sembol Nakliyat Depoculuk Tic. Ltd. Şti.</b> (bundan böyle "İşveren" olarak anılacaktır). İşbu Sözleşme, İşveren'in ticari faaliyetlerini yürüttüğü <b>Sembol Nakliyat</b> ve <b>Depoevim</b> markalarının tamamını kapsar.`)}
+        <table>
+          <tr><td class="label" style="width:22%;">1.2. Personel — Ad Soyad</td><td><b>${ad}</b></td><td class="label" style="width:16%;">T.C. Kimlik No</td><td>${tc}</td></tr>
+          <tr><td class="label">Adres</td><td colspan="3">${adres}</td></tr>
+        </table>
+        ${pr(`(bundan böyle "Personel" olarak anılacaktır).`)}
+        ${pr(`<b>1.3.</b> Personel, İşveren bünyesinde <b>${gorev}</b> olarak istihdam edilmekte olup görevi gereği İşveren'in müşteri, iş ortağı ve fiyat bilgilerine erişmektedir. İşbu Sözleşme, iş sözleşmesinin eki ve ayrılmaz parçasıdır.`)}
+
+        ${md('MADDE 2 — GİZLİ BİLGİNİN TANIMI')}
+        ${pr(`<b>2.1.</b> İşbu Sözleşme kapsamında "Gizli Bilgi"; yazılı, sözlü, elektronik veya başka herhangi bir yolla öğrenilmiş olmasına bakılmaksızın aşağıdakileri ve bunlarla sınırlı olmamak üzere İşveren'e ait tüm ticari sır ve bilgileri ifade eder:`)}
+        ${pr(`<b>a)</b> Müşteri kimlik, adres ve iletişim bilgileri, müşteri listeleri ve müşteri geçmişi kayıtları;<br/>
+        <b>b)</b> Personelin görevi gereği oluşturduğu veya eriştiği portföy kayıtları: site yönetimleri, apartman yöneticileri, emlakçılar, müteahhitler, yıkım ve kentsel dönüşüm firmaları, muhtarlıklar, kapıcılar, tadilat firmaları ve kurumsal iş ortaklarına ait isim, iletişim ve anlaşma bilgileri;<br/>
+        <b>c)</b> Fiyat listeleri, fiyatlandırma ve iskonto politikaları, kampanya koşulları, ekspertiz kayıtları ve teklifler;<br/>
+        <b>d)</b> Site yönetimleriyle yapılan teminat ve garanti protokolleri, iş ortaklarıyla yapılan yönlendirme/prim anlaşmaları ve bunların koşulları;<br/>
+        <b>e)</b> Müşteri sözleşmeleri, teslim/güvenlik kodları, depo oda numaraları ve mühür kayıtları, CRM sistemindeki her türlü kayıt;<br/>
+        <b>f)</b> İş süreçleri, operasyon yöntemleri, personel ve ücret bilgileri, mali bilgiler ve her türlü ticari know-how.`)}
+        ${pr(`<b>2.2.</b> Kamuya İşveren tarafından bilinçli olarak açıklanmış bilgiler (ör. web sitesinde yayımlanan kampanyalar) Gizli Bilgi sayılmaz. Bir bilginin gizli olup olmadığında tereddüt hâlinde bilgi gizli kabul edilir.`)}
+
+        ${md('MADDE 3 — GİZLİLİK YÜKÜMLÜLÜĞÜ')}
+        ${pr(`<b>3.1.</b> Personel, Gizli Bilgi'yi yalnızca iş görme ediminin ifası amacıyla kullanacak; İşveren'in yazılı izni olmaksızın hiçbir üçüncü gerçek veya tüzel kişiye doğrudan ya da dolaylı olarak açıklamayacak, aktarmayacak, kullandırmayacaktır.`)}
+        ${pr(`<b>3.2.</b> Personel; Gizli Bilgi'yi kopyalamayacak, fotoğraflamayacak, kişisel telefon, bilgisayar, e-posta, bulut hesabı veya taşınabilir belleğe aktarmayacak, sosyal medya ve mesajlaşma uygulamalarında paylaşmayacak, iş amacı dışında not almayacak ve saklamayacaktır.`)}
+        ${pr(`<b>3.3.</b> Bu yükümlülük, iş ilişkisinin devamı süresince ve iş ilişkisi her ne sebeple sona ererse ersin, sona erdikten sonra da süresiz olarak devam eder (6098 sayılı TBK m. 396/4).`)}
+        ${pr(`<b>3.4.</b> Personel, Gizli Bilgi'nin yetkisiz kişilerce ele geçirildiğini veya böyle bir riski öğrendiği anda durumu derhâl İşveren'e bildirmekle yükümlüdür.`)}
+
+        ${md('MADDE 4 — KİŞİSEL VERİLERİN KORUNMASI (KVKK)')}
+        ${pr(`<b>4.1.</b> Personel; görevi gereği eriştiği müşteri ve iş ortaklarına ait kişisel verileri 6698 sayılı Kişisel Verilerin Korunması Kanunu'na uygun olarak yalnızca İşveren'in talimatları doğrultusunda işleyecek, üçüncü kişilere aktarmayacak ve KVKK m. 12/4 uyarınca bu yükümlülüğe görevden ayrıldıktan sonra da uymaya devam edecektir. Aykırılık hâlinde 5237 sayılı TCK m. 136 ve devamı hükümleri uyarınca cezai sorumluluğun doğabileceğini bildiğini kabul eder.`)}
+        ${pr(`<b>4.2.</b> İşveren de Personel'e ait kişisel verileri KVKK'ya uygun şekilde, yalnızca iş ilişkisinin gerektirdiği amaç ve süreyle sınırlı olarak işlemeyi ve gizli tutmayı kabul ve taahhüt eder.`)}
+
+        ${md('MADDE 5 — BELGE VE MATERYALLERİN İADESİ')}
+        ${pr(`<b>5.1.</b> İş ilişkisinin sona ermesi hâlinde Personel; portföy defteri, not defterleri, müşteri ve iş ortağı listeleri, kartvizitler, fiyat listeleri, sözleşme ve protokol örnekleri, kendisine tahsis edilen telefon, hat, cihaz ve bunlardaki kayıtlar dâhil Gizli Bilgi içeren her türlü belge ve materyali en geç ayrılış günü eksiksiz olarak İşveren'e iade edecek; hiçbir kopya, suret veya kayıt alıkoymayacaktır. CRM ve kurumsal hesap erişimleri aynı gün İşveren'ce kapatılır.`)}
+
+        ${md('MADDE 6 — İŞ SÜRESİNCE SADAKAT VE İŞ AKTARMAMA YASAĞI')}
+        ${pr(`<b>6.1.</b> Personel, iş ilişkisi devam ettiği sürece 6098 sayılı TBK m. 396 uyarınca İşveren'e sadakatle hizmet etmekle yükümlüdür. Bu kapsamda Personel; İşveren'e telefon, WhatsApp, sosyal medya, iş ortağı yönlendirmesi veya saha çalışması yoluyla ulaşan ya da kendisinin görevi sırasında edindiği hiçbir müşteriyi, iş talebini, ekspertizi veya yönlendirmeyi İşveren'in bilgisi ve yazılı onayı olmaksızın başka bir gerçek veya tüzel kişiye, rakip firmaya ya da kendi hesabına aktaramaz, satamaz, yönlendiremez; işi İşveren adına bağlamak yerine kısmen veya tamamen üçüncü kişilere yaptıramaz.`)}
+        ${pr(`<b>6.2.</b> Üçüncü firmalarca Personel'e daha yüksek komisyon, prim, pay veya sair menfaat teklif edilmesi bu yasağı ortadan kaldırmaz. Personel, bu tür bir teklif aldığında durumu derhâl İşveren'e bildirmekle yükümlüdür. Yasağa aykırı iş aktarımı karşılığında doğrudan veya dolaylı olarak elde edilen her türlü komisyon ve menfaat İşveren'e aittir; Personel bunları derhâl ve nakden İşveren'e iade eder.`)}
+        ${pr(`<b>6.3.</b> Bu maddeye aykırılık, 4857 sayılı İş Kanunu m. 25/II-e uyarınca doğruluk ve bağlılığa uymayan davranış olarak haklı ve tazminatsız derhâl fesih sebebidir. Ayrıca aktarılan veya satılan her bir iş için Madde 8.2'de kararlaştırılan cezai şart ayrı ayrı uygulanır ve aktarılan işin İşveren fiyat listesindeki bedeli, İşveren'in asgari zararı olarak ayrıca tazmin edilir.`)}
+
+        ${md('MADDE 7 — İŞ SONRASI: MÜŞTERİ AYARTMAMA, AKTARMAMA VE REKABET ETMEME (TBK m. 444-447)')}
+        ${pr(`<b>7.1.</b> Personel; iş ilişkisinin sona ermesinden itibaren <b>2 (iki) yıl</b> süreyle ve <b>İstanbul ili</b> sınırları içinde, evden eve nakliyat ve eşya depolama iş kollarıyla sınırlı olmak üzere;`)}
+        ${pr(`<b>a)</b> İşveren'in müşterilerini ve Madde 2.1(b)'de sayılan iş ortaklarını kendi veya üçüncü bir kişi ya da rakip firma adına ayartmayacak, bu kişilerle Gizli Bilgi'yi kullanarak iş ilişkisi kurmayacak;<br/>
+        <b>b)</b> Kendi adına veya ortağı, yöneticisi, danışmanı, çalışanı ya da fiilî yürütücüsü olduğu bir işletme aracılığıyla aynı iş kollarında faaliyette bulunmayacak; bu amaçla işletme kurmayacak, kurulmuş veya kurulacak bir işletmeye iştirak etmeyecektir. Faaliyetin başka bir kişi veya unvan (eş, akraba, üçüncü kişi adına kayıtlı işletme dâhil) altında yürütülmesi bu yasağı ortadan kaldırmaz; fiilî durum esas alınır;<br/>
+        <b>c)</b> İşveren nezdinde çalışırken edindiği müşterileri ve iş ortaklarını; kendisinin kurduğu veya iştirak ettiği bir işletmeye ya da üçüncü herhangi bir gerçek veya tüzel kişiye / rakip firmaya yönlendirmeyecek, aktarmayacak, tanıştırmayacak; bu tür yönlendirme, aktarım veya aracılık karşılığında doğrudan ya da dolaylı olarak (eşi, yakını veya kontrolündeki kişi ve şirketler üzerinden sağlananlar dâhil) komisyon, prim, pay, ücret, hediye veya sair hiçbir menfaat talep ve temin etmeyecektir;<br/>
+        <b>d)</b> İşveren'in müşteri ve iş ortağı listelerini herhangi bir rakibe vermeyecek, kullandırmayacak;<br/>
+        <b>e)</b> İşveren çalışanlarını başka bir işletmeye geçmeye teşvik etmeyecektir.`)}
+        ${pr(`<b>7.2.</b> Personel'in 7.1(c) bendine aykırı biçimde elde ettiği her türlü komisyon ve menfaat tutarı, İşveren'in uğradığı zararın hesabında asgari zarar karinesi olarak kabul edilir ve Madde 8.2'deki cezai şarttan ayrı olarak iadesi talep edilebilir.`)}
+        ${pr(`<b>7.3.</b> Taraflar, bu sınırlamaların süre, yer ve konu bakımından TBK m. 445'e uygun ve Personel'in ekonomik geleceğini hakkaniyete aykırı biçimde tehlikeye düşürmeyecek ölçüde olduğunu kabul ederler.`)}
+
+        ${md('MADDE 8 — İHLAL HÂLİNDE YAPTIRIMLAR')}
+        ${pr(`<b>8.1.</b> Personel'in işbu Sözleşme'ye aykırı her bir davranışı; 4857 sayılı İş Kanunu m. 25/II-e uyarınca doğruluk ve bağlılığa uymayan davranış niteliğinde olup İşveren'e iş sözleşmesini haklı nedenle ve tazminatsız derhâl fesih hakkı verir.`)}
+        ${pr(`<b>8.2.</b> Personel, işbu Sözleşme'nin 3, 4, 5, 6 ve 7. maddelerine aykırılığın tespit edildiği her bir ihlal için İşveren'e net <b>.................... TL</b> (yalnız ..............................................................) cezai şart ödemeyi kabul, beyan ve taahhüt eder. Cezai şartın ödenmesi, İşveren'in bu tutarı aşan zararlarının genel hükümlere göre tazminini talep etme ve ihlalin durdurulmasını isteme haklarını ortadan kaldırmaz (TBK m. 179).`)}
+        ${pr(`<b>8.3.</b> İşveren'in; 6102 sayılı TTK m. 54 vd. (haksız rekabet), 5237 sayılı TCK m. 239 (ticari sır, bankacılık sırrı veya müşteri sırrı niteliğindeki bilgi veya belgelerin açıklanması) ve TCK m. 136 (verileri hukuka aykırı olarak verme veya ele geçirme) hükümlerinden doğan şikâyet ve dava hakları saklıdır.`)}
+
+        ${md('MADDE 9 — SÜRE VE YÜRÜRLÜK')}
+        ${pr(`<b>9.1.</b> İşbu Sözleşme imza tarihinde yürürlüğe girer; iş ilişkisi süresince ve iş ilişkisi sona erdikten sonra gizlilik yükümlülükleri bakımından süresiz, Madde 7'deki yükümlülükler bakımından 2 (iki) yıl süreyle hüküm ifade eder. Herhangi bir hükmün geçersiz sayılması diğer hükümlerin geçerliliğini etkilemez.`)}
+
+        ${md('MADDE 10 — DELİL, TEBLİGAT VE YETKİ')}
+        ${pr(`<b>10.1.</b> İhtilaf hâlinde İşveren'in defter, kayıt, CRM verileri, e-posta ve WhatsApp yazışmaları HMK m. 193 uyarınca kesin delil teşkil eder. <b>10.2.</b> Taraflar, Madde 1'de yazılı adreslerinin geçerli tebligat adresi olduğunu; adres değişikliğinin 3 (üç) gün içinde yazılı bildirilmemesi hâlinde bu adreslere yapılan tebligatın geçerli sayılacağını kabul ederler. <b>10.3.</b> İşbu Sözleşme'den doğan uyuşmazlıklarda İstanbul Anadolu Mahkemeleri ve İcra Daireleri yetkilidir.`)}
+
+        ${pr(`İşbu Sözleşme 10 (on) maddeden ibaret olup <b>${tarih}</b> tarihinde 2 (iki) nüsha olarak düzenlenmiş, taraflarca okunup her sayfası paraflanarak imza altına alınmış ve bir nüshası Personel'e teslim edilmiştir.`)}
+        ${f.note ? `<div class="section-title">Ek Açıklama</div><div class="desc-box">${f.note}</div>` : ''}
+
+        <div class="section-title" style="color:#111;">Personel'in el yazısı ile: "Okudum, anladım, bir nüshasını teslim aldım."</div>
+        <div class="desc-box" style="min-height:40px;">................................................................................................................................................................................</div>
+
+        <table style="margin-top:10px;">
+          <tr>
+            <td style="width:50%;vertical-align:top;">
+              <b>İŞVEREN</b><br/>Sembol Nakliyat Depoculuk Tic. Ltd. Şti.<br/><span style="font-size:9px;">(Sembol Nakliyat &amp; Depoevim)</span><br/><br/>Kaşe / Yetkili İmza:<br/><br/><br/>
+            </td>
+            <td style="width:50%;vertical-align:top;">
+              <b>PERSONEL</b><br/>Ad Soyad: <b>${ad}</b><br/>T.C. No: ${tc}<br/><br/>İmza:<br/><br/><br/>
+            </td>
+          </tr>
+        </table>
+        <p class="note">Bilgilendirme: Bu belge, 6098 s. TBK, 4857 s. İş Kanunu, 6698 s. KVKK, 6102 s. TTK ve 5237 s. TCK'nın ilgili hükümleri gözetilerek hazırlanmış bir taslaktır. İmzalatılmadan önce cezai şart tutarının belirlenmesi ve rekabet yasağı kapsamının somut duruma uygunluğu bakımından bir avukata inceletilmesi tavsiye olunur.</p>
+      `;
+      }
     }
   ];
 
