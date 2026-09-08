@@ -10350,25 +10350,29 @@ export const MesaiTakipView = ({ personnelList = [], currentUser, jobs = [], onV
                           // "Önerileri Puantaja İşle" düğmesi bu kaydı günceller
                           // (elle düzenlenmiş / izin kodlu kayıtlara dokunmaz).
                           // ================================================================
-                          const oneriFarkli = pd && !pd.manual && on && on.status && on.status !== pd.status;
+                          // ================================================================
+                          // DEĞİŞTİ (kullanıcı talebi): "ÖNERİ" ROZETLERİ KALDIRILDI
+                          // ----------------------------------------------------------------
+                          // Öneriler artık otomatik olarak puantaja yazıldığı için ekranda
+                          // "öneri" kavramı kalmadı; yalnızca MUHASEBEDEKİ KESİN durum
+                          // gösterilir. Ayrıca satırdaki sadeleştirilmiş öneri (yalnızca
+                          // Geldi/Devamsız üretir) asıl motorun yazdığı "Fazla Mesai 0,5 sa"
+                          // ile çelişip "ÖNERİ: Geldi" gibi yanıltıcı rozet basıyordu.
+                          // Puantaj henüz yazılmadıysa (yeni QR, birkaç saniyelik gecikme)
+                          // QR'a göre durum gösterilir; rozet konmaz, kendiliğinden güncellenir.
+                          // ================================================================
                           return (
                             <div className="flex items-center gap-1.5 min-w-[120px]">
                               {st ? (() => {
                                 // Saat girilmiş "Geldi" kaydı = fazla mesai (mavi)
                                 const fazlaGibi = gosterilen.status === 'G' && parseFloat(String(gosterilen.hours).replace(',', '.')) > 0;
                                 return (
-                                  <span className={`text-[10px] font-black px-2 py-0.5 rounded-full whitespace-nowrap ${fazlaGibi ? 'bg-blue-100 text-blue-700' : st.color}`} title={on?.aciklama || ''}>
+                                  <span className={`text-[10px] font-black px-2 py-0.5 rounded-full whitespace-nowrap ${fazlaGibi ? 'bg-blue-100 text-blue-700' : st.color}`}
+                                        title={pd?.kaynak ? `Kaynak: ${pd.kaynak}${pd.duzenlemeTarihi ? ' • ' + pd.duzenlemeTarihi : ''}` : 'Muhasebeye henüz yazılmadı; birkaç saniye içinde otomatik işlenir'}>
                                     {fazlaGibi ? 'Fazla Mesai' : st.label}{gosterilen.hours ? ` • ${gosterilen.hours} sa` : ''}
                                   </span>
                                 );
                               })() : <span className="text-[10px] font-bold text-neutral-300 whitespace-nowrap">Girilmemiş</span>}
-                              {!pd && on && <span className="text-[8px] font-black text-blue-500 whitespace-nowrap" title="Henüz muhasebeye yazılmadı, QR'a göre önerilen durum">ÖNERİ</span>}
-                              {oneriFarkli && (
-                                <span className="text-[8px] font-black text-amber-600 whitespace-nowrap"
-                                      title={`Muhasebede "${durumStili(pd.status).label}" yazılı, ancak güncel öneri "${durumStili(on.status).label}". Güncellemek için "Önerileri Puantaja İşle" düğmesini kullanın.\n${on.aciklama || ''}`}>
-                                  ÖNERİ: {durumStili(on.status).label}
-                                </span>
-                              )}
                               <button
                                 onClick={() => setDurumDuzenle({ kayit: g, status: gosterilen?.status || 'G', hours: gosterilen?.hours || '' })}
                                 className="p-1 rounded-lg text-neutral-400 hover:text-blue-600 hover:bg-blue-50 transition shrink-0"
