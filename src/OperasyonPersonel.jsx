@@ -9583,10 +9583,28 @@ export const MesaiTakipView = ({ personnelList = [], currentUser, jobs = [], onV
   const [topluIsleniyor, setTopluIsleniyor] = useState(false);
   const KORUNAN_KODLAR = ['Yİ', 'Bİ', 'Üİ', 'R', 'İB', 'Hİ'];
 
-  const onerileriPuantajaIsle = async () => {
-    if (!fTarih) return;
-    const gunOnerileri = gunlukOneriler[fTarih] || {};
-    const [y, a, g] = fTarih.split('-').map(Number);
+  // ==========================================================================
+  // DEĞİŞTİ (kullanıcı talebi): "PUANTAJA İŞLE" DÜĞMESİ KALDIRILDI — OTOMATİK
+  // --------------------------------------------------------------------------
+  // Öneri motoru (mesaiOnerileriHesapla) zaten kullanıcının kurallarını
+  // uyguluyor: fazla mesai = EKİPTEKİ EN ERKEN ÇIKIŞ − 18:00, yarım saate
+  // AŞAĞI yuvarlanır (18:45 -> 0,5 sa, 19:20 -> 1 sa, 18:29 -> 0). Eksik
+  // mesai kişinin KENDİ çıkışına göredir. Bu kurallar İş Onaylama Tahtası'ndaki
+  // mesai onayıyla aynı motordan gelir.
+  //
+  // Eskiden öneriler yalnızca yöneticinin "Puantaja İşle"ye basmasıyla
+  // muhasebeye yazılıyordu. Artık QR kayıtları geldikçe OTOMATİK yazılır
+  // (aşağıdaki useEffect). Bu fonksiyon parametreli hâle getirildi:
+  //   • tarih  : işlenecek gün (varsayılan: ekranda seçili gün)
+  //   • sessiz : true ise onay/uyarı penceresi açılmaz (otomatik mod)
+  // KORUMALAR AYNEN DURUYOR: elle düzenlenmiş (manual) ve izin kodlu kayıtlara
+  // dokunulmaz; değişiklik yoksa yazma yapılmaz.
+  // ==========================================================================
+  const onerileriPuantajaIsle = async (tarih = fTarih, sessiz = false) => {
+    if (!tarih) return;
+    const gunOnerileri = gunlukOneriler[tarih] || {};
+    if (Object.keys(gunOnerileri).length === 0) return;   // Öneri henüz hesaplanmadı
+    const [y, a, g] = tarih.split('-').map(Number);
 
     // ======================================================================
     // DEĞİŞTİ (hata düzeltmesi): Mavi ve beyaz yaka AYRI dokümanlara yazılır.
@@ -9622,13 +9640,15 @@ export const MesaiTakipView = ({ personnelList = [], currentUser, jobs = [], onV
     });
 
     if (yazilacaklar.length === 0) {
-      alert('İşlenecek yeni öneri yok. (Elle düzenlenmiş ve izinli kayıtlara dokunulmaz.)');
+      if (!sessiz) alert('İşlenecek yeni öneri yok. (Elle düzenlenmiş ve izinli kayıtlara dokunulmaz.)');
       return;
     }
-    const ozet = yazilacaklar.slice(0, 12).map(x => `• ${x.ad}: ${x.kod}${x.saat ? ` (${x.saat} sa)` : ''}`).join('\n');
-    if (!window.confirm(
-      `${fTarih.split('-').reverse().join('.')} tarihli ${yazilacaklar.length} kayıt Personel Muhasebe puantajına işlenecek:\n\n${ozet}${yazilacaklar.length > 12 ? `\n… ve ${yazilacaklar.length - 12} kayıt daha` : ''}\n\nDevam edilsin mi?`
-    )) return;
+    if (!sessiz) {
+      const ozet = yazilacaklar.slice(0, 12).map(x => `• ${x.ad}: ${x.kod}${x.saat ? ` (${x.saat} sa)` : ''}`).join('\n');
+      if (!window.confirm(
+        `${tarih.split('-').reverse().join('.')} tarihli ${yazilacaklar.length} kayıt Personel Muhasebe puantajına işlenecek:\n\n${ozet}${yazilacaklar.length > 12 ? `\n… ve ${yazilacaklar.length - 12} kayıt daha` : ''}\n\nDevam edilsin mi?`
+      )) return;
+    }
 
     setTopluIsleniyor(true);
     try {
@@ -9654,13 +9674,44 @@ export const MesaiTakipView = ({ personnelList = [], currentUser, jobs = [], onV
       // NOT: Bu bileşene addSystemLog prop'u geçilmediği için sistem günlüğü
       // yazılmaz; işlemin izi puantaj kaydındaki kaynak/duzenlemeTarihi
       // alanlarında zaten tutuluyor.
-      alert(`${yazilacaklar.length} kayıt puantaja işlendi. Personel Muhasebe > ${guncellenenYakalar.join(' ve ')} Mesai tablosundan kontrol edebilirsiniz.`);
+      if (!sessiz) alert(`${yazilacaklar.length} kayıt puantaja işlendi. Personel Muhasebe > ${guncellenenYakalar.join(' ve ')} Mesai tablosundan kontrol edebilirsiniz.`);
+      setSonOtomatikIsleme({ tarih, adet: yazilacaklar.length, zaman: new Date() });
     } catch (e) {
       console.error('Toplu işleme hatası:', e);
-      alert('Puantaja işlenirken hata oluştu. Lütfen tekrar deneyin.');
+      if (!sessiz) alert('Puantaja işlenirken hata oluştu. Lütfen tekrar deneyin.');
     }
     setTopluIsleniyor(false);
   };
+
+  // ==========================================================================
+  // YENİ: OTOMATİK PUANTAJ SENKRONU
+  // --------------------------------------------------------------------------
+  // Öneriler veya muhasebe kayıtları değişince, ekranda görünen günler için
+  // öneriler otomatik olarak puantaja işlenir. Güvenlik önlemleri:
+  //  • 1,5 sn bekleme (debounce): QR kayıtları arka arkaya gelirken her
+  //    kayıtta değil, dalga bitince tek yazma yapılır.
+  //  • Yalnızca BUGÜN ve ÖNCEKİ günler işlenir; gelecek gün yazılmaz.
+  //  • Aynı anda ikinci senkron başlatılmaz (topluIsleniyor kilidi).
+  //  • Elle düzenlenmiş / izinli kayıtlar korunur (fonksiyon içinde).
+  //  • Döngü riski yok: puantaj yazmak öneriyi DEĞİŞTİRMEZ (öneri QR
+  //    kayıtlarından hesaplanır); ikinci turda fark bulunmaz, yazma olmaz.
+  //  • Gün içinde çıkış henüz basılmamışken 'G' yazılır; ekip çıkışları
+  //    geldikçe öneri FM'e döner ve kayıt kendiliğinden güncellenir.
+  // ==========================================================================
+  const [sonOtomatikIsleme, setSonOtomatikIsleme] = useState(null);
+  useEffect(() => {
+    if (topluIsleniyor) return;
+    const bugun = mesaiBugunStr();
+    const gunler = Object.keys(gunlukOneriler || {}).filter(t => t <= bugun);
+    if (gunler.length === 0) return;
+    const zamanlayici = setTimeout(async () => {
+      for (const t of gunler) {
+        try { await onerileriPuantajaIsle(t, true); } catch (e) { console.warn('Otomatik puantaj:', t, e); }
+      }
+    }, 1500);
+    return () => clearTimeout(zamanlayici);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [gunlukOneriler, puantajlar]);
 
   // Giriş/çıkış SAATİNİ bir kez düzenler ve kaydı kilitler.
   // Kayıt silinmez; yalnızca saat güncellenir ve kimin düzelttiği iz olarak kalır.
@@ -9793,13 +9844,18 @@ export const MesaiTakipView = ({ personnelList = [], currentUser, jobs = [], onV
               saatleriyle birlikte) Personel Muhasebe puantajına tek tıkla
               aktarır. Elle düzenlenmiş ve izinli kayıtlara dokunmaz.
               ============================================================== */}
+          {/* DEĞİŞTİ (kullanıcı talebi): "Puantaja İşle" DÜĞMESİ KALDIRILDI.
+              Öneriler artık otomatik işlenir; burada yalnızca durum rozeti var. */}
           {gunlukOzet.toplam > 0 && (
-            <button type="button" onClick={onerileriPuantajaIsle} disabled={topluIsleniyor}
-              title="Bu günün mesai önerilerini Personel Muhasebe > Mavi Yaka Mesai tablosuna işler"
-              className="flex items-center gap-1.5 px-3 py-2 rounded-xl shadow-sm bg-emerald-500 hover:bg-emerald-600 disabled:bg-neutral-400 text-white transition">
-              <CheckCircle className="w-4 h-4 shrink-0" />
-              <span className="text-[11px] font-black whitespace-nowrap">{topluIsleniyor ? 'İşleniyor...' : 'Puantaja İşle'}</span>
-            </button>
+            <div title="Mesai önerileri Personel Muhasebe puantajına otomatik işlenir. Elle düzenlenmiş ve izinli kayıtlara dokunulmaz."
+              className={`flex items-center gap-1.5 px-3 py-2 rounded-xl shadow-sm text-white transition ${topluIsleniyor ? 'bg-amber-500' : 'bg-emerald-500'}`}>
+              {topluIsleniyor ? <Loader2 className="w-4 h-4 shrink-0 animate-spin" /> : <CheckCircle className="w-4 h-4 shrink-0" />}
+              <span className="text-[11px] font-black whitespace-nowrap">
+                {topluIsleniyor ? 'Puantaja işleniyor...' : sonOtomatikIsleme
+                  ? `Otomatik işlendi • ${sonOtomatikIsleme.zaman.toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' })}`
+                  : 'Otomatik puantaj açık'}
+              </span>
+            </div>
           )}
         </div>
       </div>
