@@ -46,7 +46,7 @@ if (typeof Node === 'function' && Node.prototype && !Node.prototype.__sembolCevi
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { Truck, Calendar, Phone, FileText, Upload, CheckCircle, Clock, PlusCircle, ClipboardList, Star, AlertTriangle, X, Users, CalendarDays, ChevronDown, ChevronUp, Briefcase, Car, Wallet, BookOpen, CheckSquare, Shield, Activity, ArrowUpRight, UserPlus, Camera, Edit, Ban, LogOut, Lock, Bell, User, Sparkles, Loader2, Copy, MessageSquareText, MessageCircle, Package, Database, Download, Save, Search, Key, ListTodo, Eye, EyeOff, FolderOpen, Scale, QrCode , Landmark, Plus, Trash2, RotateCcw, Building2 } from 'lucide-react';
 import { signInAnonymously, signInWithCustomToken, onAuthStateChanged } from 'firebase/auth';
-import { collection, addDoc, onSnapshot, doc, updateDoc, deleteDoc, setDoc, getDocs, getDocsFromCache, query, orderBy, getDoc, limit, where } from 'firebase/firestore';
+import { collection, addDoc, onSnapshot, doc, updateDoc, deleteDoc, setDoc, getDocs, getDocsFromCache, query, orderBy, getDoc, limit, where, documentId } from 'firebase/firestore';
 import { db, appId, auth, DEPO_LOCATIONS, MESAI_STATUS_OPTIONS, callGeminiAPI, isVideoUrl, normalizeCariName, normalizeCariPhone, CopyButton, MediaCaptureMenu, calculateMaterials, generateContractPDF, bildirimDestekleniyorMu, bildirimIzniIste, bildirimGonder,
   // YENİ: Resmi Ayarları ekranının kullandığı veri ve yardımcılar.
   // Sözleşme PDF'i ve WhatsApp mesajları da aynı kaynaktan okuyacağı için
@@ -4764,9 +4764,33 @@ const ModuleAccessView = ({ moduleCatalog, addSystemLog }) => {
       // CANLI LİMİT 36 -> 12: her belge bir AY'dır ve içinde tüm personelin
       // günlük kayıtları vardır (büyük belgeler). Daha eski aylar puantaj/maaş
       // ekranlarında ay seçilerek zaten ayrıca okunuyor.
-      unsubs.push(onSnapshot(query(getCol('mesai'), limit(12)), snap => {
+      // ====================================================================
+      // HATA DÜZELTMESİ (kullanıcı bildirimi): BEYAZ YAKA FAZLA GÜN / FAZLA
+      // MESAİ PERSONEL PROFİLİNDE 0 GÖRÜNÜYORDU
+      // --------------------------------------------------------------------
+      // KÖK NEDEN: Mesai belgeleri iki adlandırmayla saklanıyor:
+      //   mavi  -> "2026_9"        beyaz -> "beyaz_2026_9"
+      // Tek bir `limit(12)` sorgusu kullanılıyordu. Firestore varsayılan
+      // olarak BELGE KİMLİĞİNE GÖRE ARTAN sıralar; "beyaz_" ile başlayan
+      // kimlikler rakamla başlayanlardan SONRA gelir. Bu yüzden beyaz yaka
+      // belgeleri listenin en sonunda kalıyor ve limit tarafından kesiliyordu
+      // — üstelik alfabetik olarak en büyük olan EN YENİ ay (beyaz_2026_9)
+      // ilk kesilendi. Sonuç: Beyaz Yaka Maaş tablosunda 110 saat / 5 fazla
+      // gün görünen personelin profilinde 0 yazıyordu.
+      //
+      // ÇÖZÜM: Tek sorgu yerine İKİ AYRI sorgu; her biri kendi grubundan EN
+      // YENİ belgeleri alır (belge kimliğine göre AZALAN sıra):
+      //   • mavi  : kimliği 'a' harfinden küçük olanlar (rakamla başlayanlar)
+      //   • beyaz : 'beyaz_' önekiyle başlayanlar
+      // Sonuçlar grup bazlı saklanıp birleştirilir; iki dinleyici birbirinin
+      // verisini EZMEZ. Her grubun kendi limiti olduğu için bir yakanın belge
+      // sayısı artsa bile diğeri kesilmez.
+      // ====================================================================
+      const mesaiGruplari = { mavi: [], beyaz: [] };
+      const mesaiSnapshotIsle = (grupAdi, snap) => {
         const flat = [];
         snap.docs.forEach(d => {
+          // 'beyaz_2026_9' ve '2026_9' kimliklerinin ikisinden de yıl/ay çıkar
           const m = d.id.match(/(\d{4})_(\d{1,2})/);
           if (!m) return;
           const records = d.data().records || {};
@@ -4775,19 +4799,25 @@ const ModuleAccessView = ({ moduleCatalog, addSystemLog }) => {
             Object.keys(dayMap).forEach(dayNum => {
               const dayData = dayMap[dayNum];
               const code = typeof dayData === 'object' && dayData !== null ? dayData.status : dayData;
-              // YENİ: FGM/FM/EM saat bilgisini de taşı (Finans mesai ücreti hesabıyla birebir eşleşmesi için)
-              // HATA DÜZELTMESİ: saat virgüllü ondalık olarak saklanıyor (örn. "4,5").
-              // parseFloat virgülü ondalık ayıracı saymadığı için parseFloat("4,5") -> 4
-              // gibi HATALI kesiliyordu (Personel Profili > Performans Özeti'ndeki
-              // "Fazla Mesai" saatinin ve Finans tarafındaki toplamların eksik
-              // görünmesine sebep oluyordu). Virgül noktaya çevrilip öyle parse edilir.
+              // FGM/FM/EM saat bilgisi de taşınır (Finans mesai ücreti hesabıyla birebir eşleşsin).
+              // Saat virgüllü ondalık saklanıyor (örn. "4,5"); parseFloat virgülü ondalık
+              // ayıracı saymadığı için önce noktaya çevrilir, yoksa "4,5" -> 4 olarak kesilirdi.
               const hours = (typeof dayData === 'object' && dayData !== null) ? (parseFloat(String(dayData.hours ?? '').replace(',', '.')) || 0) : 0;
               flat.push({ personId, year: parseInt(m[1]), month: parseInt(m[2]), day: parseInt(dayNum), code, hours });
             });
           });
         });
-        setAllMesaiRecords(flat);
-      }, console.error));
+        mesaiGruplari[grupAdi] = flat;                    // Yalnızca kendi grubunu tazeler
+        setAllMesaiRecords([...mesaiGruplari.mavi, ...mesaiGruplari.beyaz]);
+      };
+      // MAVİ: kimliği rakamla başlayanlar ('a'dan küçük) — en yeni 12 ay
+      unsubs.push(onSnapshot(
+        query(getCol('mesai'), orderBy(documentId(), 'desc'), where(documentId(), '<', 'a'), limit(12)),
+        snap => mesaiSnapshotIsle('mavi', snap), console.error));
+      // BEYAZ: 'beyaz_' önekli belgeler — en yeni 12 ay
+      unsubs.push(onSnapshot(
+        query(getCol('mesai'), orderBy(documentId(), 'desc'), where(documentId(), '>=', 'beyaz_'), where(documentId(), '<', 'beyaz`'), limit(12)),
+        snap => mesaiSnapshotIsle('beyaz', snap), console.error));
 
       // DÜZELTME: sahaDenetimleri de zamanla büyüyen bir koleksiyon; güvenlik
       // limiti eklendi (en güncel 2000 denetim yeterli, iş listelerinde
