@@ -12,7 +12,9 @@ import { db, appId, MESAI_STATUS_OPTIONS, isPersonnelVisibleInMonth, isUzaktanCa
   // YENİ: IBAN Paylaş penceresi için varsayılan hesap nesnesi ve IBAN biçimleyici.
   aktifBankaHesabi, ibanBicimle,
   // YENİ: Ekipler arası destek — puantajın da destek zincirini bilmesi için
-  personelSonEkipIsi, isTamEkipIdleri, isMesaiEkipIdleri } from './shared.jsx';
+  personelSonEkipIsi, isTamEkipIdleri, isMesaiEkipIdleri,
+  // YENİ: Satış personelinin açtığı iş sayısında çok günlü/çok araçlı kopyaları elemek için
+  isYardimciKayitMi } from './shared.jsx';
 
   export const AdminMaviYakaTakip = ({ jobs, personnelList, transactions }) => {
     const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
@@ -3094,15 +3096,78 @@ export const CalismaProgramiBolumu = ({ program, guncelle, yakaTipi }) => {
     // "Hasarlı İş" (Operasyon): tüm ekiplerin toplam hasarlı iş sayısı
     const operasyonHasarliIsSayisi = tumNakliyeDepoIsleriDonem.filter(j => j.endJobDetails?.damageStatus === 'Hasar var').length;
 
-    // "Saha Puanı" (Operasyon): ortalama puan yerine TOPLAM SAHA DENETİMİ sayısı
-    // (şirket geneli, seçili döneme göre — kimin denetlendiğinden bağımsız).
-    const operasyonSahaDenetimSayisi = isOperasyonPozisyonu ? sahaDenetimleri.filter(dn => {
-      const d = dn.jobDate ? new Date(dn.jobDate) : (dn.denetimTarihi ? new Date(dn.denetimTarihi) : null);
+    // ========================================================================
+    // DEĞİŞTİ (kullanıcı talebi): "Saha Puanı" kartı KALDIRILDI, yerine
+    // "YAPTIĞI SAHA DENETİMİ" geldi.
+    // ------------------------------------------------------------------------
+    // ÖNCEKİ HALİ: Şirket genelindeki TÜM denetimler sayılıyordu — kişinin
+    // kendi performansını göstermiyordu. Operasyon sorumlusunun profilinde
+    // "40 denetim" yazsa bile bunların kaçını kendisinin yaptığı belli değildi.
+    // YENİ HALİ: Yalnızca BU PERSONELİN ŞEF OLARAK yaptığı denetimler sayılır
+    // (denetim kaydındaki sefAdi alanı personelin adıyla eşleşenler).
+    // Seçili dönem filtresi (Bu Hafta / Bu Ay / Geçen Ay / Bu Sene / Tüm
+    // Zamanlar) aynen uygulanır.
+    //
+    // KAPSAM: Kart artık yalnızca Operasyon pozisyonuna özel değil — saha
+    // denetimi yapan HERKESTE (şefler dâhil) anlamlı çalışır.
+    // ========================================================================
+    const personelDenetimTarihi = (dn) => dn.jobDate ? new Date(dn.jobDate) : (dn.denetimTarihi ? new Date(dn.denetimTarihi) : null);
+    const yaptigiSahaDenetimleri = (sahaDenetimleri || []).filter(dn => {
+      // Denetimi YAPAN kişi bu personel mi? (ad karşılaştırması, boşluk toleranslı)
+      const sef = String(dn.sefAdi || '').trim().toLocaleLowerCase('tr-TR');
+      const kisi = String(person?.fullName || '').trim().toLocaleLowerCase('tr-TR');
+      if (!sef || !kisi || sef !== kisi) return false;
+      const d = personelDenetimTarihi(dn);
       if (!d) return false;
       if (periodStart && d < periodStart) return false;
       if (periodEnd && d > periodEnd) return false;
       return true;
-    }).length : 0;
+    });
+    const yaptigiDenetimSayisi = yaptigiSahaDenetimleri.length;
+    // Bu denetimlerde kaç personel puanlandı (kartın alt bilgisi)
+    const denetlenenPersonelSayisi = yaptigiSahaDenetimleri
+      .reduce((t, dn) => t + ((dn.personelPuanlari || []).length), 0);
+
+    // ========================================================================
+    // YENİ (kullanıcı talebi): SATIŞ PERSONELİ İÇİN "AÇTIĞI İŞ KAYDI"
+    // ------------------------------------------------------------------------
+    // Satış personeli sahada denetim yapmaz; performansı AÇTIĞI İŞ SAYISIDIR.
+    // Bu yüzden o pozisyonda 3. kart "Yaptığı Saha Denetimi" yerine
+    // "Açtığı İş Kaydı" gösterir.
+    //
+    // KURALLAR:
+    //  • Kayıt sahibi eşleşmesi: job.createdBy alanı personelin adıyla
+    //    karşılaştırılır (Türkçe küçük harf + boşluk toleranslı).
+    //  • ASANSÖR İŞLERİ HARİÇ (kullanıcı talebi) — sistemin başka yerlerinde
+    //    de kullanılan kural: tip belirtilmemiş kayıtlar Nakliye sayılır.
+    //  • İPTAL edilen kayıtlar ana sayıya girmez; varsa alt satırda ayrıca
+    //    belirtilir (raporlardaki iptal davranışıyla tutarlı).
+    //  • Çok günlü / çok araçlı işlerde her gün ve her araç ayrı doküman
+    //    olduğu için anaIsleriFiltrele mantığıyla TEK iş sayılır — satış
+    //    personeli bir iş açtıysa 1 sayılmalı, 4 değil.
+    //  • Seçili dönem filtresi (Bu Hafta / Bu Ay / ...) aynen uygulanır.
+    // ========================================================================
+    const isSatisPersoneli = person?.position === 'Satış Personeli';
+    const kayitSahibiMi = (j) => {
+      const a = String(j?.createdBy || '').trim().toLocaleLowerCase('tr-TR');
+      const b = String(person?.fullName || '').trim().toLocaleLowerCase('tr-TR');
+      return !!a && !!b && a === b;
+    };
+    const actigiKayitlarHam = (jobs || []).filter(j => {
+      if (!kayitSahibiMi(j)) return false;
+      if (j.type === 'Asansör') return false;              // Asansör işleri hariç
+      const d = new Date(j.date);
+      if (isNaN(d)) return false;
+      if (periodStart && d < periodStart) return false;
+      if (periodEnd && d > periodEnd) return false;
+      return true;
+    });
+    // Çok günlü / çok araçlı kopyaları tek işe indirger (yardımcı kayıtları eler)
+    const actigiKayitlar = actigiKayitlarHam.filter(j => !isYardimciKayitMi(j, actigiKayitlarHam));
+    const actigiIsSayisi = actigiKayitlar.filter(j => j.status !== 'cancelled').length;
+    const actigiIptalSayisi = actigiKayitlar.filter(j => j.status === 'cancelled').length;
+    const actigiNakliye = actigiKayitlar.filter(j => j.status !== 'cancelled' && (j.type === 'Nakliye' || !j.type)).length;
+    const actigiDepo = actigiKayitlar.filter(j => j.status !== 'cancelled' && j.type === 'Depo').length;
 
     const recentJobs = personJobs.slice(0, 5);
     const recentReviewedJobs = personJobs.filter(j => j.pointsApproved && j.reviewImage).slice(0, 5);
@@ -4788,20 +4853,39 @@ export const CalismaProgramiBolumu = ({ program, guncelle, yakaTipi }) => {
               <span className="text-xs font-bold text-red-700">Hasarlı İş</span>
               {isOperasyonPozisyonu && <span className="block text-[9px] font-bold text-red-400 mt-0.5">Tüm ekipler</span>}
             </div>
-            {/* YENİ: SAHA PUANI — şeflerin saha denetiminde verdiği 1-5 puanların ortalaması.
-                Hiç puan verilmemiş personelde her zaman 0 görünür.
-                DEĞİŞTİ (kullanıcı talebi): Operasyon pozisyonunda ortalama puan yerine
-                TOPLAM SAHA DENETİMİ SAYISI (şirket geneli, döneme göre) gösterilir. */}
+            {/* ============================================================
+                DEĞİŞTİ (kullanıcı talebi): "SAHA PUANI" KARTI KALDIRILDI
+                Yerine "YAPTIĞI SAHA DENETİMİ" geldi: personelin ŞEF OLARAK
+                kaç saha denetimi gerçekleştirdiğini gösterir ve üstteki
+                dönem filtresine (Bu Hafta / Bu Ay / ...) göre değişir.
+                Alt satırda o denetimlerde kaç personelin puanlandığı yazar.
+                ============================================================ */}
+            {/* DEĞİŞTİ (kullanıcı talebi): SATIŞ PERSONELİNDE bu kart
+                "Açtığı İş Kaydı" gösterir (Asansör hariç); diğer pozisyonlarda
+                "Yaptığı Saha Denetimi" olarak kalır. İkisi de dönem filtresine
+                göre değişir. */}
             <div className="bg-purple-50 p-4 rounded-xl border border-purple-200 text-center">
-              <span className="text-3xl font-black text-purple-700 block">
-                {isOperasyonPozisyonu ? operasyonSahaDenetimSayisi : (sahaPuanOrtalamasi % 1 === 0 ? sahaPuanOrtalamasi : String(sahaPuanOrtalamasi).replace('.', ','))}
-              </span>
-              <span className="text-xs font-bold text-purple-700">Saha Puanı</span>
-              <span className="block text-[9px] font-bold text-purple-400 mt-0.5">
-                {isOperasyonPozisyonu
-                  ? 'Toplam saha denetimi (tüm ekipler)'
-                  : (sahaPuanDonem.length > 0 ? `${sahaPuanDonem.length} denetim • 5 üzerinden` : 'Henüz şef denetimi yok')}
-              </span>
+              {isSatisPersoneli ? (
+                <>
+                  <span className="text-3xl font-black text-purple-700 block">{actigiIsSayisi}</span>
+                  <span className="text-xs font-bold text-purple-700">Açtığı İş Kaydı</span>
+                  <span className="block text-[9px] font-bold text-purple-400 mt-0.5">
+                    {actigiIsSayisi > 0
+                      ? `${actigiNakliye} nakliye • ${actigiDepo} depo${actigiIptalSayisi > 0 ? ` • ${actigiIptalSayisi} iptal` : ''}`
+                      : 'Bu dönemde iş kaydı açmadı'}
+                  </span>
+                </>
+              ) : (
+                <>
+                  <span className="text-3xl font-black text-purple-700 block">{yaptigiDenetimSayisi}</span>
+                  <span className="text-xs font-bold text-purple-700">Yaptığı Saha Denetimi</span>
+                  <span className="block text-[9px] font-bold text-purple-400 mt-0.5">
+                    {yaptigiDenetimSayisi > 0
+                      ? `${denetlenenPersonelSayisi} personel puanlandı`
+                      : 'Bu dönemde denetim yapmadı'}
+                  </span>
+                </>
+              )}
             </div>
             {/* YENİ: Mesai/puantaj tabanlı sayaçlar */}
             <div className="bg-blue-50 p-4 rounded-xl border border-blue-200 text-center">
@@ -7341,6 +7425,27 @@ const mesaiSuankiSaat = () => new Date().toLocaleTimeString('tr-TR', { hour: '2-
 export const mesaiYakaTipi = (p) => (p?.collarType === 'Mavi Yaka' || (!p?.collarType && ['Şoför', 'Taşıma Elemanı', 'Mobilya Ustası', 'Depo Sorumlusu', 'Temizlik Görevlisi'].includes(p?.position))) ? 'Mavi Yaka' : 'Beyaz Yaka';
 
 // ============================================================================
+// HATA DÜZELTMESİ (kullanıcı bildirimi): BEYAZ YAKA MESAİSİ MUHASEBEYE İŞLENMİYORDU
+// ============================================================================
+// KÖK NEDEN: Personel Muhasebe, mavi yaka puantajını `mesai/{yıl}_{ay}`,
+// beyaz yaka puantajını ise `mesai/beyaz_{yıl}_{ay}` dokümanından okur
+// (Finans.jsx'teki docPrefix kuralı). Mesai Takip ekranı ise yaka ayrımı
+// yapmadan HERKESİ `mesai/{yıl}_{ay}` dokümanına yazıyordu. Sonuç: Vehbi
+// Çirgin'e (Beyaz Yaka) girilen "Fazla Gün" mavi yaka dokümanına gidiyor,
+// Beyaz Yaka Mesai tablosu ise boş dokümanı okuyup "Hİ" gösteriyordu.
+//
+// ÇÖZÜM: Mesai Takip'teki TÜM okuma/yazma noktaları artık yakaya göre doğru
+// dokümanı hedefler. Bu yardımcı, Finans'taki docPrefix kuralının birebir
+// aynısıdır — iki dosya asla farklı dokümana bakmaz.
+// ============================================================================
+export const mesaiDokumanOneki = (personelVeyaYaka) => {
+  const yaka = typeof personelVeyaYaka === 'string' ? personelVeyaYaka : mesaiYakaTipi(personelVeyaYaka);
+  return yaka === 'Beyaz Yaka' ? 'beyaz_' : '';
+};
+// Yaka + yıl + ay -> doküman kimliği (örn. 'beyaz_2026_9' veya '2026_9')
+export const mesaiDokumanAnahtari = (personelVeyaYaka, yil, ay) => `${mesaiDokumanOneki(personelVeyaYaka)}${yil}_${ay}`;
+
+// ============================================================================
 // YENİ: MESAİ TAKİBİNE KİM DAHİL?
 // Kullanıcı kuralı: "Sadece Beyaz Yakada örgün çalışanların takibi olsun.
 // Uzaktan olanların olmasın. QR Kod Anasayfa ve Mesai Takip Bölümünde
@@ -7830,7 +7935,9 @@ export const QrTarayiciModal = ({ tip, currentUser, onKapat, hedefTarih }) => {
       if (tip === 'giris' && kayit.dateStr >= MESAI_KURAL_BASLANGIC) {
         try {
           const [py, pa, pg] = kayit.dateStr.split('-').map(Number);
-          const puantajRef = doc(db, 'artifacts', appId, 'public', 'data', 'mesai', `${py}_${pa}`);
+          // DEĞİŞTİ: Otomatik 'G' de personelin yakasına göre doğru dokümana yazılır
+          // (beyaz yaka -> `beyaz_{yıl}_{ay}`); kayit.collarType QR kaydında mevcut.
+          const puantajRef = doc(db, 'artifacts', appId, 'public', 'data', 'mesai', mesaiDokumanAnahtari(kayit.collarType || 'Mavi Yaka', py, pa));
           const pSnap = await getDoc(puantajRef);
           const pRecords = pSnap.exists() ? (pSnap.data().records || {}) : {};
           const mevcutHucre = pRecords[String(kayit.personnelId)]?.[pg];
@@ -8418,8 +8525,9 @@ export const IZIN_KODLARI = ['Hİ', 'Yİ', 'Bİ', 'Üİ', 'R'];
 export const izinDurumuGetir = async (person, tarihStr) => {
   const [y, a, g] = (tarihStr || '').split('-').map(Number);
   // 1) Puantajda izin/rapor kodu var mı?
+  // DEĞİŞTİ: Beyaz yaka için `beyaz_` önekli doküman okunur (Finans ile aynı kural)
   try {
-    const snap = await getDoc(doc(db, 'artifacts', appId, 'public', 'data', 'mesai', `${y}_${a}`));
+    const snap = await getDoc(doc(db, 'artifacts', appId, 'public', 'data', 'mesai', mesaiDokumanAnahtari(person, y, a)));
     if (snap.exists()) {
       const hucre = (snap.data().records || {})[person?.id]?.[g];
       const kod = typeof hucre === 'object' && hucre !== null ? hucre.status : hucre;
@@ -8484,7 +8592,8 @@ export const MesaiOnayButonlari = ({ currentUser }) => {
       // ve hem durum hem izin bilgisi bu tek okumadan türetilir.
       // ====================================================================
       const bugunT = mesaiBugunStr(), dunT = mesaiDunStr();
-      const ayAnahtari = (t) => { const [y, a] = t.split('-').map(Number); return `${y}_${a}`; };
+      // DEĞİŞTİ: Giriş yapan personelin yakasına göre doğru doküman okunur
+      const ayAnahtari = (t) => { const [y, a] = t.split('-').map(Number); return mesaiDokumanAnahtari(currentUser, y, a); };
       const gerekenAylar = [...new Set([ayAnahtari(bugunT), ayAnahtari(dunT)])]; // Genelde tek ay
       const aylikVeri = {};
       for (const anahtar of gerekenAylar) {
@@ -8892,11 +9001,15 @@ export const MesaiTakipView = ({ personnelList = [], currentUser, jobs = [], onV
 
   useEffect(() => {
     if (!raporAyAnahtari) return;
-    const ref = doc(db, 'artifacts', appId, 'public', 'data', 'mesai', raporAyAnahtari);
-    const unsub = onSnapshot(ref, snap => {
-      setPuantajlar(prev => ({ ...prev, [raporAyAnahtari]: snap.exists() ? (snap.data().records || {}) : {} }));
-    }, () => {});
-    return () => unsub(); // Ay değişince veya sayfadan çıkınca kapanır
+    // DEĞİŞTİ: Mavi (`2026_9`) ve beyaz (`beyaz_2026_9`) dokümanları BİRLİKTE dinlenir;
+    // puantajlar state'i her ikisini kendi anahtarıyla tutar.
+    const anahtarlar = [raporAyAnahtari, `beyaz_${raporAyAnahtari}`];
+    const unsubs = anahtarlar.map(anahtar => onSnapshot(
+      doc(db, 'artifacts', appId, 'public', 'data', 'mesai', anahtar),
+      snap => setPuantajlar(prev => ({ ...prev, [anahtar]: snap.exists() ? (snap.data().records || {}) : {} })),
+      () => {}
+    ));
+    return () => unsubs.forEach(u => u()); // Ay değişince veya sayfadan çıkınca kapanır
   }, [raporAyAnahtari]);
 
   // ==========================================================================
@@ -8919,11 +9032,14 @@ export const MesaiTakipView = ({ personnelList = [], currentUser, jobs = [], onV
 
   useEffect(() => {
     if (!haftaBasiAyAnahtari) return;
-    const ref = doc(db, 'artifacts', appId, 'public', 'data', 'mesai', haftaBasiAyAnahtari);
-    const unsub = onSnapshot(ref, snap => {
-      setPuantajlar(prev => ({ ...prev, [haftaBasiAyAnahtari]: snap.exists() ? (snap.data().records || {}) : {} }));
-    }, () => {});
-    return () => unsub();
+    // DEĞİŞTİ: Önceki ay için de mavi + beyaz dokümanları birlikte dinlenir
+    const anahtarlar = [haftaBasiAyAnahtari, `beyaz_${haftaBasiAyAnahtari}`];
+    const unsubs = anahtarlar.map(anahtar => onSnapshot(
+      doc(db, 'artifacts', appId, 'public', 'data', 'mesai', anahtar),
+      snap => setPuantajlar(prev => ({ ...prev, [anahtar]: snap.exists() ? (snap.data().records || {}) : {} })),
+      () => {}
+    ));
+    return () => unsubs.forEach(u => u());
   }, [haftaBasiAyAnahtari]);
 
   // YENİ: Görünen her tarih için QR'a dayalı ÖNERİLERİ hesaplar.
@@ -9313,9 +9429,12 @@ export const MesaiTakipView = ({ personnelList = [], currentUser, jobs = [], onV
   // MESAİ DURUMU (PUANTAJ) YARDIMCILARI — "Tüm Kayıtlar" sütunu için
   // ---------------------------------------------------------------------------
   // Bir kaydın muhasebedeki (puantaj) mevcut durumunu okur
+  // Kaydın yakasını çöz: QR kaydında collarType varsa o, yoksa personel listesinden
+  const kaydinYakasi = (k) => k?.collarType || mesaiYakaTipi(personnelList.find(p => String(p.id) === String(k?.personnelId)));
   const puantajDurumu = (k) => {
     const [y, a, g] = (k.dateStr || '').split('-').map(Number);
-    const hucre = puantajlar[`${y}_${a}`]?.[k.personnelId]?.[g];
+    // DEĞİŞTİ: Beyaz yaka için `beyaz_` önekli doküman okunur (Finans ile aynı kural)
+    const hucre = puantajlar[mesaiDokumanAnahtari(kaydinYakasi(k), y, a)]?.[k.personnelId]?.[g];
     if (!hucre) return null;
     return typeof hucre === 'object' ? hucre : { status: hucre, hours: '', manual: false };
   };
@@ -9419,7 +9538,9 @@ export const MesaiTakipView = ({ personnelList = [], currentUser, jobs = [], onV
     if (!durumDuzenle) return;
     const { kayit, status, hours } = durumDuzenle;
     const [y, a, g] = (kayit.dateStr || '').split('-').map(Number);
-    const anahtar = `${y}_${a}`;
+    // DEĞİŞTİ: Beyaz yaka kaydı `beyaz_{yıl}_{ay}` dokümanına yazılır; böylece
+    // Personel Muhasebe > Beyaz Yaka Mesai tablosunda anında görünür.
+    const anahtar = mesaiDokumanAnahtari(kaydinYakasi(kayit), y, a);
     try {
       const ref = doc(db, 'artifacts', appId, 'public', 'data', 'mesai', anahtar);
       const snap = await getDoc(ref);
@@ -9466,21 +9587,30 @@ export const MesaiTakipView = ({ personnelList = [], currentUser, jobs = [], onV
     if (!fTarih) return;
     const gunOnerileri = gunlukOneriler[fTarih] || {};
     const [y, a, g] = fTarih.split('-').map(Number);
-    const anahtar = `${y}_${a}`;
 
-    // Yazılacakları önce hesapla ki kullanıcıya net bir onay sorusu sorulabilsin
-    const ref = doc(db, 'artifacts', appId, 'public', 'data', 'mesai', anahtar);
-    let mevcutRecords = {};
+    // ======================================================================
+    // DEĞİŞTİ (hata düzeltmesi): Mavi ve beyaz yaka AYRI dokümanlara yazılır.
+    // Eskiden herkes `{yıl}_{ay}` dokümanına yazılıyordu; beyaz yaka kayıtları
+    // Personel Muhasebe'nin okuduğu `beyaz_{yıl}_{ay}` dokümanına hiç gitmiyordu.
+    // Artık iki doküman ayrı okunur, her personel kendi yakasının dokümanına
+    // yazılır ve yalnızca değişiklik olan doküman kaydedilir.
+    // ======================================================================
+    const anahtarlar = { 'Mavi Yaka': mesaiDokumanAnahtari('Mavi Yaka', y, a), 'Beyaz Yaka': mesaiDokumanAnahtari('Beyaz Yaka', y, a) };
+    const refler = Object.fromEntries(Object.entries(anahtarlar).map(([yk, an]) => [yk, doc(db, 'artifacts', appId, 'public', 'data', 'mesai', an)]));
+    const mevcutRecordsYaka = {};
     try {
-      const snap = await getDoc(ref);
-      mevcutRecords = snap.exists() ? (snap.data().records || {}) : {};
+      for (const [yk, ref] of Object.entries(refler)) {
+        const snap = await getDoc(ref);
+        mevcutRecordsYaka[yk] = snap.exists() ? (snap.data().records || {}) : {};
+      }
     } catch (e) { console.error('Puantaj okunamadı:', e); alert('Puantaj okunamadı.'); return; }
 
     const yazilacaklar = [];
     takiptekiPersonel.forEach(p => {
       const oneri = gunOnerileri[String(p.id)];
       if (!oneri || !oneri.status) return;
-      const mevcut = mevcutRecords[String(p.id)]?.[g];
+      const yaka = mesaiYakaTipi(p);
+      const mevcut = mevcutRecordsYaka[yaka][String(p.id)]?.[g];
       const mevcutKod = typeof mevcut === 'object' && mevcut !== null ? mevcut.status : mevcut;
       if (mevcut && mevcut.manual === true) return;              // Elle girilmiş: dokunma
       if (KORUNAN_KODLAR.includes(mevcutKod)) return;            // İzin kodu: dokunma
@@ -9488,7 +9618,7 @@ export const MesaiTakipView = ({ personnelList = [], currentUser, jobs = [], onV
         ? String(oneri.hours || '') : '';
       const mevcutSaat = typeof mevcut === 'object' && mevcut !== null ? String(mevcut.hours || '') : '';
       if (mevcutKod === oneri.status && mevcutSaat === yeniSaat) return; // Değişiklik yok
-      yazilacaklar.push({ id: String(p.id), ad: p.fullName, kod: oneri.status, saat: yeniSaat });
+      yazilacaklar.push({ id: String(p.id), ad: p.fullName, kod: oneri.status, saat: yeniSaat, yaka });
     });
 
     if (yazilacaklar.length === 0) {
@@ -9502,22 +9632,29 @@ export const MesaiTakipView = ({ personnelList = [], currentUser, jobs = [], onV
 
     setTopluIsleniyor(true);
     try {
-      const records = { ...mevcutRecords };
-      yazilacaklar.forEach(x => {
-        if (!records[x.id]) records[x.id] = {};
-        records[x.id][g] = {
-          status: x.kod,
-          hours: x.saat,
-          manual: false,                  // Otomatik: sonraki onaylarda güncellenebilir
-          kaynak: 'Mesai Takip (Toplu Onay)',
-          duzenlemeTarihi: new Date().toLocaleString('tr-TR')
-        };
-      });
-      await setDoc(ref, { records, updatedAt: new Date().toISOString() }, { merge: true });
+      // Her yaka kendi dokümanına yazılır
+      const guncellenenYakalar = [];
+      for (const yaka of ['Mavi Yaka', 'Beyaz Yaka']) {
+        const yakaninKayitlari = yazilacaklar.filter(x => x.yaka === yaka);
+        if (yakaninKayitlari.length === 0) continue;        // Bu yakada değişiklik yok, dokuma
+        const records = { ...mevcutRecordsYaka[yaka] };
+        yakaninKayitlari.forEach(x => {
+          if (!records[x.id]) records[x.id] = {};
+          records[x.id][g] = {
+            status: x.kod,
+            hours: x.saat,
+            manual: false,                  // Otomatik: sonraki onaylarda güncellenebilir
+            kaynak: 'Mesai Takip (Toplu Onay)',
+            duzenlemeTarihi: new Date().toLocaleString('tr-TR')
+          };
+        });
+        await setDoc(refler[yaka], { records, updatedAt: new Date().toISOString() }, { merge: true });
+        guncellenenYakalar.push(yaka);
+      }
       // NOT: Bu bileşene addSystemLog prop'u geçilmediği için sistem günlüğü
       // yazılmaz; işlemin izi puantaj kaydındaki kaynak/duzenlemeTarihi
       // alanlarında zaten tutuluyor.
-      alert(`${yazilacaklar.length} kayıt puantaja işlendi. Personel Muhasebe > Mavi Yaka Mesai tablosundan kontrol edebilirsiniz.`);
+      alert(`${yazilacaklar.length} kayıt puantaja işlendi. Personel Muhasebe > ${guncellenenYakalar.join(' ve ')} Mesai tablosundan kontrol edebilirsiniz.`);
     } catch (e) {
       console.error('Toplu işleme hatası:', e);
       alert('Puantaja işlenirken hata oluştu. Lütfen tekrar deneyin.');
