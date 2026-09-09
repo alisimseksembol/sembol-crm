@@ -3534,8 +3534,47 @@ export const SahaPortfoyView = ({ personnelList = [], currentUser, addSystemLog,
   const bosRandevuForm = {
     firmaAdi: '', tip: 'Emlak Ofisi', yetkili: '', telefon: '', bolge: '', adres: '',
     tarih: bugunStr(), saat: '10:00', atanan: currentUser?.fullName || '', not: '',
+    portfoyId: null,   // YENİ: randevu mevcut bir portföy kaydına bağlıysa kimliği
   };
   const [randevuForm, setRandevuForm] = useState(bosRandevuForm);
+  // YENİ (kullanıcı talebi): Yeni Randevu penceresinde portföyden arama metni
+  const [randevuPortfoyArama, setRandevuPortfoyArama] = useState('');
+
+  // ==========================================================================
+  // YENİ (kullanıcı talebi): MEVCUT PORTFÖYDEN RANDEVU
+  // --------------------------------------------------------------------------
+  // (a) Yeni Randevu penceresinde arama kutusuna firma adı yazılınca portföy
+  //     listesi süzülür; seçilen firmanın bilgileri forma dolar ve randevu o
+  //     kayda BAĞLANIR (portfoyId). Böylece "Gidildi" dendiğinde ziyaret
+  //     günlüğüne işlenir, "Portföye Ekle" seçeneği gereksiz yere çıkmaz.
+  // (b) Portföy detay penceresindeki "Randevu Ekle" düğmesi aynı formu firma
+  //     bilgileri hazır dolu ve bağlı şekilde açar.
+  // ==========================================================================
+  const portfoydenRandevuFormunuDoldur = (pf) => {
+    setRandevuForm(f => ({
+      ...f,
+      firmaAdi: pf.firmaAdi || '', tip: pf.tip || 'Emlak Ofisi', yetkili: pf.yetkili || '',
+      telefon: pf.telefon || '', bolge: pf.bolge || '', adres: pf.adres || '',
+      atanan: pf.portfoySahibi || f.atanan || currentUser?.fullName || '',
+      portfoyId: pf.id,
+    }));
+    setRandevuPortfoyArama('');
+  };
+  // Portföy detayından doğrudan randevu penceresi aç
+  const portfoydenRandevuAc = (pf) => {
+    setRandevuForm({ ...bosRandevuForm, tarih: pf.sonrakiRandevu && pf.sonrakiRandevu >= bugunStr() ? pf.sonrakiRandevu : bugunStr() });
+    portfoydenRandevuFormunuDoldur(pf);
+    setRandevuDuzenlenenId(null);
+    setRandevuFormAcik(true);
+  };
+  // Arama sonuçları (en fazla 8; ad, yetkili veya bölgeye göre)
+  const randevuPortfoySonuclari = useMemo(() => {
+    const q = randevuPortfoyArama.trim().toLocaleLowerCase('tr-TR');
+    if (q.length < 2) return [];
+    return partnerlar
+      .filter(pf => [pf.firmaAdi, pf.yetkili, pf.bolge].some(x => String(x || '').toLocaleLowerCase('tr-TR').includes(q)))
+      .slice(0, 8);
+  }, [randevuPortfoyArama, partnerlar]);
   // Takvim: görüntülenen ay + seçili gün
   const [rTakvim, setRTakvim] = useState(() => { const d = new Date(); return { yil: d.getFullYear(), ay: d.getMonth() }; });
   const [rSecilenGun, setRSecilenGun] = useState(bugunStr());
@@ -3559,13 +3598,20 @@ export const SahaPortfoyView = ({ personnelList = [], currentUser, addSystemLog,
         addSystemLog?.('Saha Randevu', `${randevuForm.firmaAdi} randevusu güncellendi (${randevuForm.tarih} ${randevuForm.saat}).`);
       } else {
         await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'sahaRandevular'), {
-          ...randevuForm, durum: 'bekliyor',
+          ...randevuForm, portfoyId: randevuForm.portfoyId || null, durum: 'bekliyor',
+          kaynak: randevuForm.portfoyId ? 'portfoy' : 'manuel',
           olusturan: currentUser?.fullName || 'Sistem', createdAt: new Date().toISOString(),
         });
         addSystemLog?.('Saha Randevu', `Yeni randevu: ${randevuForm.firmaAdi} — ${randevuForm.tarih} ${randevuForm.saat} (${randevuForm.atanan}).`);
+        // YENİ: Portföye bağlı randevuysa karttaki "Sonraki randevu" tarihi de güncellenir
+        if (randevuForm.portfoyId) {
+          try {
+            await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'sahaPortfoy', randevuForm.portfoyId), { sonrakiRandevu: randevuForm.tarih });
+          } catch (err) { console.warn('Portföy sonraki randevu güncellenemedi:', err); }
+        }
       }
       setRSecilenGun(randevuForm.tarih); // kaydedince takvim o güne odaklansın
-      setRandevuFormAcik(false); setRandevuDuzenlenenId(null); setRandevuForm(bosRandevuForm);
+      setRandevuFormAcik(false); setRandevuDuzenlenenId(null); setRandevuForm(bosRandevuForm); setRandevuPortfoyArama('');
     } catch (e) { console.error(e); alert('Randevu kaydedilemedi.'); }
     finally { setRandevuKaydediliyor(false); }
   };
@@ -4075,6 +4121,38 @@ export const SahaPortfoyView = ({ personnelList = [], currentUser, addSystemLog,
               <h3 className="font-black text-lg text-indigo-700 flex items-center gap-2"><CalendarDays className="w-5 h-5" /> {randevuDuzenlenenId ? 'Randevuyu Düzenle' : 'Yeni Randevu'}</h3>
               <button type="button" onClick={() => setRandevuFormAcik(false)} className="p-2 hover:bg-neutral-100 rounded-xl transition"><X className="w-5 h-5" /></button>
             </div>
+            {/* YENİ (kullanıcı talebi): Mevcut portföyden seç — ad yazınca listeden bul */}
+            {!randevuDuzenlenenId && (
+              <div className="bg-indigo-50 border border-indigo-200 rounded-xl p-2.5">
+                <label className="text-[10px] font-black uppercase text-indigo-600 flex items-center gap-1"><Search className="w-3 h-3" /> Mevcut Portföyden Seç (isteğe bağlı)</label>
+                {randevuForm.portfoyId ? (
+                  <div className="flex items-center justify-between gap-2 mt-1 bg-white border border-indigo-300 rounded-lg px-2.5 py-1.5">
+                    <span className="text-xs font-black text-indigo-800 truncate">✓ {randevuForm.firmaAdi} <span className="font-bold text-neutral-400">• portföye bağlı</span></span>
+                    <button type="button" onClick={() => setRandevuForm({ ...bosRandevuForm, tarih: randevuForm.tarih, saat: randevuForm.saat, atanan: randevuForm.atanan, not: randevuForm.not })}
+                      className="text-[10px] font-black text-red-600 hover:underline shrink-0">Bağı kaldır</button>
+                  </div>
+                ) : (
+                  <div className="relative mt-1">
+                    <input value={randevuPortfoyArama} onChange={e => setRandevuPortfoyArama(e.target.value)}
+                      placeholder="Firma / yetkili / bölge yazın..." className="w-full p-2.5 border border-indigo-300 rounded-lg text-sm bg-white outline-none focus:ring-2 focus:ring-indigo-600" />
+                    {randevuPortfoySonuclari.length > 0 && (
+                      <div className="absolute z-10 left-0 right-0 mt-1 bg-white border border-indigo-200 rounded-xl shadow-xl max-h-52 overflow-y-auto">
+                        {randevuPortfoySonuclari.map(pf => (
+                          <button key={pf.id} type="button" onClick={() => portfoydenRandevuFormunuDoldur(pf)}
+                            className="w-full text-left px-3 py-2 hover:bg-indigo-50 border-b border-neutral-100 last:border-0">
+                            <div className="text-xs font-black text-neutral-800">{pf.firmaAdi}</div>
+                            <div className="text-[10px] font-bold text-neutral-500">{pf.tip}{pf.yetkili ? ` • ${pf.yetkili}` : ''}{pf.bolge ? ` • ${pf.bolge}` : ''} • {pf.durum}</div>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                    {randevuPortfoyArama.trim().length >= 2 && randevuPortfoySonuclari.length === 0 && (
+                      <p className="text-[10px] font-bold text-neutral-400 mt-1">Portföyde eşleşen kayıt yok — aşağıya yeni firma olarak yazabilirsiniz.</p>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
               <div className="sm:col-span-2"><label className="text-[10px] font-black uppercase text-neutral-400">Firma Adı *</label>
                 <input value={randevuForm.firmaAdi} onChange={e => setRandevuForm({ ...randevuForm, firmaAdi: e.target.value })} placeholder="Örn: İstanbul Kepenk" className="w-full p-2.5 border border-neutral-300 rounded-xl text-sm outline-none focus:ring-2 focus:ring-indigo-600" /></div>
@@ -4216,6 +4294,11 @@ export const SahaPortfoyView = ({ personnelList = [], currentUser, addSystemLog,
                 <p className="text-[11px] font-bold text-neutral-500 mt-0.5">{detay.tip} • {detay.bolge || 'Bölge girilmemiş'} • Portföy: <span className="text-purple-700">{detay.portfoySahibi}</span>{detay.baglayan && <> • Bağlayan: <span className="text-green-600">{detay.baglayan}</span></>}</p>
               </div>
               <div className="flex items-center gap-1.5 shrink-0">
+                {/* YENİ (kullanıcı talebi): Mevcut portföye doğrudan randevu ekle */}
+                <button type="button" onClick={() => portfoydenRandevuAc(detay)}
+                  className="px-3 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-black transition flex items-center gap-1.5" title="Bu firmaya yeni randevu oluştur (takvime düşer)">
+                  <CalendarDays className="w-4 h-4" /> Randevu Ekle
+                </button>
                 <button type="button" onClick={() => { setForm({ firmaAdi: detay.firmaAdi, tip: detay.tip, yetkili: detay.yetkili || '', telefon: detay.telefon || '', bolge: detay.bolge || '', adres: detay.adres || '', portfoySahibi: detay.portfoySahibi || '', durum: detay.durum, komisyonNotu: detay.komisyonNotu || '', sonrakiRandevu: detay.sonrakiRandevu || '', notlar: detay.notlar || '', kartvizitler: detay.kartvizitler || [] }); setDuzenlenenId(detay.id); setFormAcik(true); }}
                   className="p-2 bg-blue-50 hover:bg-blue-100 text-blue-600 rounded-xl border border-blue-100 transition" title="Düzenle"><Edit className="w-4 h-4" /></button>
                 <button type="button" onClick={() => setSilinecekId(detay.id)} className="p-2 bg-red-50 hover:bg-red-100 text-red-600 rounded-xl border border-red-100 transition" title="Sil"><Trash2 className="w-4 h-4" /></button>
