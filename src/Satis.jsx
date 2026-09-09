@@ -3531,6 +3531,36 @@ export const SahaPortfoyView = ({ personnelList = [], currentUser, addSystemLog,
   const [randevuDuzenlenenId, setRandevuDuzenlenenId] = useState(null);
   const [randevuKaydediliyor, setRandevuKaydediliyor] = useState(false);
   const [randevuSilinecekId, setRandevuSilinecekId] = useState(null);
+  // ==========================================================================
+  // YENİ (kullanıcı talebi): RANDEVU TARİHİNİ DEĞİŞTİR (ERTELE)
+  // --------------------------------------------------------------------------
+  // Takvimdeki bekleyen randevu satırında "Tarihi Değiştir" düğmesi: küçük bir
+  // pencerede yeni tarih/saat seçilir. Eski tarih kaydın erteleme geçmişine
+  // yazılır (kaç kez ertelendiği görünsün). Randevu portföye bağlıysa karttaki
+  // "Sonraki randevu" alanı da aynı tarihe güncellenir; takvim yeni güne odaklanır.
+  // ==========================================================================
+  const [tarihDegistir, setTarihDegistir] = useState(null); // { randevu, tarih, saat }
+  const randevuTarihiniDegistir = async () => {
+    if (!tarihDegistir?.randevu) return;
+    const r = tarihDegistir.randevu;
+    const yeniTarih = tarihDegistir.tarih, yeniSaat = tarihDegistir.saat || r.saat || '10:00';
+    if (!yeniTarih) { alert('Yeni tarih seçin.'); return; }
+    if (yeniTarih === r.tarih && yeniSaat === (r.saat || '')) { setTarihDegistir(null); return; } // değişiklik yok
+    try {
+      await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'sahaRandevular', r.id), {
+        tarih: yeniTarih, saat: yeniSaat,
+        ertelemeGecmisi: [...(r.ertelemeGecmisi || []), { eskiTarih: r.tarih, eskiSaat: r.saat || '', yeniTarih, yeniSaat, yapan: currentUser?.fullName || 'Sistem', zaman: new Date().toISOString() }],
+      });
+      // Portföye bağlıysa karttaki "Sonraki randevu" da aynı tarihe çekilir
+      const pf = r.portfoyId ? partnerlar.find(x => x.id === r.portfoyId) : null;
+      if (pf) {
+        try { await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'sahaPortfoy', pf.id), { sonrakiRandevu: yeniTarih }); } catch (err) { console.warn(err); }
+      }
+      addSystemLog?.('Saha Randevu', `${r.firmaAdi} randevusu ${r.tarih.split('-').reverse().join('.')} → ${yeniTarih.split('-').reverse().join('.')} ${yeniSaat} tarihine alındı.`);
+      setRSecilenGun(yeniTarih);       // Takvim yeni güne odaklansın
+      setTarihDegistir(null);
+    } catch (e) { console.error(e); alert('Tarih değiştirilemedi.'); }
+  };
   const bosRandevuForm = {
     firmaAdi: '', tip: 'Emlak Ofisi', yetkili: '', telefon: '', bolge: '', adres: '',
     tarih: bugunStr(), saat: '10:00', atanan: currentUser?.fullName || '', not: '',
@@ -4091,8 +4121,15 @@ export const SahaPortfoyView = ({ personnelList = [], currentUser, addSystemLog,
                                   className="px-2.5 py-1.5 bg-white border border-green-400 text-green-700 hover:bg-green-50 text-[10px] font-black rounded-lg transition whitespace-nowrap">Sadece Gidildi</button>
                               </>
                             )}
+                            {/* YENİ (kullanıcı talebi): Randevuyu ertele — yeni tarih/saat seç */}
+                            <button type="button" onClick={() => setTarihDegistir({ randevu: r, tarih: r.tarih, saat: r.saat || '10:00' })}
+                              title="Randevunun tarihini / saatini değiştir"
+                              className="px-2.5 py-1.5 bg-white border border-amber-400 text-amber-700 hover:bg-amber-50 text-[10px] font-black rounded-lg transition whitespace-nowrap flex items-center gap-1">
+                              <CalendarDays className="w-3 h-3" /> Tarihi Değiştir{(r.ertelemeGecmisi || []).length > 0 ? ` (${r.ertelemeGecmisi.length}×)` : ''}
+                            </button>
                             <button type="button" onClick={() => randevuDurum(r, 'iptal')}
-                              className="px-2.5 py-1.5 bg-white border border-neutral-300 text-neutral-500 hover:bg-neutral-100 text-[10px] font-black rounded-lg transition">İptal</button>
+                              title="Randevuyu iptal et (gerekirse sonra tekrar aktifleştirilebilir)"
+                              className="px-2.5 py-1.5 bg-white border border-neutral-300 text-neutral-500 hover:bg-neutral-100 text-[10px] font-black rounded-lg transition">İptal Et</button>
                           </>
                         );
                       })()}
@@ -4194,6 +4231,45 @@ export const SahaPortfoyView = ({ personnelList = [], currentUser, addSystemLog,
       )}
 
       {/* RANDEVU SİLME ONAYI */}
+      {/* YENİ: TARİHİ DEĞİŞTİR penceresi — detay penceresinin de üstünde açılır */}
+      {tarihDegistir && (
+        <div className="fixed inset-0 bg-black/50 z-[9998] flex items-center justify-center p-4" onClick={() => setTarihDegistir(null)}>
+          <div className="bg-white rounded-3xl shadow-2xl w-full max-w-sm p-5 space-y-3" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between">
+              <h3 className="font-black text-amber-700 flex items-center gap-2"><CalendarDays className="w-5 h-5" /> Tarihi Değiştir</h3>
+              <button type="button" onClick={() => setTarihDegistir(null)} className="p-1.5 hover:bg-neutral-100 rounded-lg"><X className="w-4 h-4" /></button>
+            </div>
+            <div className="bg-amber-50 border border-amber-200 rounded-xl p-2.5 text-xs">
+              <p className="font-black text-amber-900">{tarihDegistir.randevu.firmaAdi}</p>
+              <p className="font-bold text-amber-700">Mevcut: {tarihDegistir.randevu.tarih?.split('-').reverse().join('.')} {tarihDegistir.randevu.saat || ''}</p>
+              {(tarihDegistir.randevu.ertelemeGecmisi || []).length > 0 && (
+                <p className="text-[10px] font-bold text-amber-600 mt-1">Bu randevu daha önce {tarihDegistir.randevu.ertelemeGecmisi.length} kez ertelendi.</p>
+              )}
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <div><label className="text-[10px] font-black uppercase text-neutral-400">Yeni Tarih *</label>
+                <input type="date" value={tarihDegistir.tarih} onChange={e => setTarihDegistir({ ...tarihDegistir, tarih: e.target.value })} className="w-full p-2.5 border border-neutral-300 rounded-xl text-sm outline-none focus:ring-2 focus:ring-amber-500" /></div>
+              <div><label className="text-[10px] font-black uppercase text-neutral-400">Saat</label>
+                <input type="time" value={tarihDegistir.saat} onChange={e => setTarihDegistir({ ...tarihDegistir, saat: e.target.value })} className="w-full p-2.5 border border-neutral-300 rounded-xl text-sm outline-none focus:ring-2 focus:ring-amber-500" /></div>
+            </div>
+            {/* Hızlı seçimler */}
+            <div className="flex flex-wrap gap-1.5">
+              {[['Yarın', 1], ['+3 gün', 3], ['1 hafta', 7], ['2 hafta', 14]].map(([ad, gun]) => {
+                const d = new Date(); d.setDate(d.getDate() + gun);
+                const t = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+                return <button key={ad} type="button" onClick={() => setTarihDegistir({ ...tarihDegistir, tarih: t })}
+                  className={`px-2.5 py-1 rounded-lg text-[10px] font-black border transition ${tarihDegistir.tarih === t ? 'bg-amber-600 text-white border-amber-600' : 'bg-white border-neutral-300 text-neutral-600 hover:bg-neutral-50'}`}>{ad}</button>;
+              })}
+            </div>
+            {tarihDegistir.randevu.portfoyId && <p className="text-[10px] font-bold text-indigo-600">Portföy kartındaki "Sonraki randevu" da bu tarihe güncellenecek.</p>}
+            <div className="flex gap-2">
+              <button type="button" onClick={() => setTarihDegistir(null)} className="flex-1 py-2.5 bg-neutral-100 hover:bg-neutral-200 text-neutral-700 font-black rounded-xl transition">Vazgeç</button>
+              <button type="button" onClick={randevuTarihiniDegistir} className="flex-1 py-2.5 bg-amber-600 hover:bg-amber-700 text-white font-black rounded-xl transition">Tarihi Kaydet</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {randevuSilinecekId && (
         <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" onClick={() => setRandevuSilinecekId(null)}>
           <div className="bg-white rounded-3xl shadow-2xl w-full max-w-sm p-5 space-y-3 text-center" onClick={e => e.stopPropagation()}>
