@@ -4114,8 +4114,12 @@ export const SahaPortfoyView = ({ personnelList = [], currentUser, addSystemLog,
       </div>
 
       {/* RANDEVU FORMU (yeni / düzenle) */}
+      {/* HATA DÜZELTMESİ (kullanıcı bildirimi): Portföy detayındaki "Randevu Ekle"
+          basılınca form ARKADA kalıyordu. Sebep: detay penceresi z-[9997], randevu
+          formu z-50 idi. Form artık detayın üstünde (z-[9998]); detay açıkken
+          doğrudan buradan randevu eklenebilir, detay kapanmaz. */}
       {randevuFormAcik && (
-        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" onClick={() => setRandevuFormAcik(false)}>
+        <div className="fixed inset-0 bg-black/50 z-[9998] flex items-center justify-center p-4" onClick={() => setRandevuFormAcik(false)}>
           <div className="bg-white rounded-3xl shadow-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto p-5 space-y-3" onClick={e => e.stopPropagation()}>
             <div className="flex items-center justify-between">
               <h3 className="font-black text-lg text-indigo-700 flex items-center gap-2"><CalendarDays className="w-5 h-5" /> {randevuDuzenlenenId ? 'Randevuyu Düzenle' : 'Yeni Randevu'}</h3>
