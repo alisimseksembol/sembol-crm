@@ -3685,6 +3685,42 @@ export const SahaPortfoyView = ({ personnelList = [], currentUser, addSystemLog,
   };
 
   // ---------------------------------------------------- KAYDET / SİL ---
+  // ==========================================================================
+  // YENİ (kullanıcı talebi): PORTFÖY "SONRAKİ RANDEVU" ↔ RANDEVU TAKVİMİ BAĞI
+  // --------------------------------------------------------------------------
+  // SORUN: Mevcut portföy kaydında "Sonraki randevu" tarihi girildiğinde bu
+  // yalnızca kartın üstünde bir tarih olarak duruyordu; Randevu Takvimi ise
+  // sadece 'sahaRandevular' koleksiyonunu okuduğu için orada görünmüyordu.
+  // ÇÖZÜM: Portföy kaydedilirken sonrakiRandevu doluysa 'sahaRandevular'da o
+  // portföye BAĞLI (portfoyId) bir randevu oluşturulur; tarih değişirse aynı
+  // randevu güncellenir (kopya oluşmaz). Böylece takvimde görünür ve oradan
+  // "Gidildi" işlenebilir.
+  // ==========================================================================
+  const portfoyRandevusunuEsitle = async (portfoyId, formVerisi) => {
+    if (!portfoyId) return;
+    const bagli = randevular.find(r => r.portfoyId === portfoyId && r.durum === 'bekliyor');
+    const tarih = (formVerisi.sonrakiRandevu || '').trim();
+    if (!tarih) return;                                   // Randevu tarihi yoksa dokunma
+    const ortak = {
+      firmaAdi: formVerisi.firmaAdi || '', tip: formVerisi.tip || 'Emlak Ofisi', yetkili: formVerisi.yetkili || '',
+      telefon: formVerisi.telefon || '', bolge: formVerisi.bolge || '', adres: formVerisi.adres || '',
+      tarih, atanan: formVerisi.portfoySahibi || currentUser?.fullName || '', portfoyId,
+    };
+    if (bagli) {
+      // Tarih veya bilgiler değişmişse bağlı randevuyu güncelle (kopya oluşturma)
+      if (bagli.tarih !== tarih || bagli.firmaAdi !== ortak.firmaAdi || bagli.telefon !== ortak.telefon) {
+        await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'sahaRandevular', bagli.id), ortak);
+      }
+    } else {
+      await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'sahaRandevular'), {
+        ...ortak, saat: '10:00', not: 'Portföy kaydındaki "Sonraki randevu" alanından otomatik oluşturuldu.',
+        durum: 'bekliyor', kaynak: 'portfoy',
+        olusturan: currentUser?.fullName || 'Sistem', createdAt: new Date().toISOString(),
+      });
+      addSystemLog?.('Saha Randevu', `${ortak.firmaAdi} için portföyden randevu takvime eklendi (${tarih}).`);
+    }
+  };
+
   const handleKaydet = async () => {
     if (!form.firmaAdi.trim()) return;
     setKaydediliyor(true);
@@ -3696,18 +3732,50 @@ export const SahaPortfoyView = ({ personnelList = [], currentUser, addSystemLog,
           hareketGecmisi: [...(p?.hareketGecmisi || []), hareket('guncelleme', 'Kayıt bilgileri güncellendi')],
         });
         addSystemLog?.('Saha Portföy', `${form.firmaAdi} kaydı güncellendi.`);
+        await portfoyRandevusunuEsitle(duzenlenenId, form);          // YENİ: takvime yansıt
       } else {
-        await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'sahaPortfoy'), {
+        const yeniRef = await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'sahaPortfoy'), {
           ...form,
           ziyaretler: [], cariHareketler: [],
           hareketGecmisi: [hareket('ekleme', `Portföye eklendi (${form.tip})`)],
           ekleyen: currentUser?.fullName || 'Sistem', createdAt: new Date().toISOString(),
         });
         addSystemLog?.('Saha Portföy', `Yeni iş ortağı adayı eklendi: ${form.firmaAdi} (${form.tip}) — Portföy: ${form.portfoySahibi}`);
+        await portfoyRandevusunuEsitle(yeniRef.id, form);           // YENİ: takvime yansıt
       }
       setFormAcik(false); setDuzenlenenId(null); setForm(bosForm);
     } catch (e) { console.error('Partner kaydedilemedi:', e); alert('Kaydedilemedi, tekrar deneyin.'); }
     setKaydediliyor(false);
+  };
+
+  // ==========================================================================
+  // YENİ (kullanıcı talebi): RANDEVU FİRMASI PORTFÖYDE Mİ?
+  // Bağlı kimlikle (portfoyId) veya firma adıyla (eski randevular için) bulur.
+  // Portföyde OLAN firmaya "Portföye Ekle" seçeneği sunulmaz — sadece "Gidildi".
+  // ==========================================================================
+  const randevununPortfoyu = (r) => {
+    if (!r) return null;
+    if (r.portfoyId) { const p = partnerlar.find(x => x.id === r.portfoyId); if (p) return p; }
+    const ad = String(r.firmaAdi || '').trim().toLocaleLowerCase('tr-TR');
+    return ad ? (partnerlar.find(x => String(x.firmaAdi || '').trim().toLocaleLowerCase('tr-TR') === ad) || null) : null;
+  };
+
+  // Portföydeki firmanın randevusu yapıldı: randevu 'gidildi' olur, portföye
+  // ziyaret günlüğü satırı düşer ve karttaki "Sonraki randevu" temizlenir.
+  const portfoyRandevusuGidildi = async (r, portfoy) => {
+    try {
+      await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'sahaRandevular', r.id), {
+        durum: 'gidildi', gidilmeTarihi: new Date().toISOString(), portfoyId: portfoy.id,
+      });
+      const ziyaret = { tarih: r.tarih || bugunStr(), sonuc: `Randevu gerçekleştirildi${r.not ? ` — ${r.not}` : ''}`, yapan: currentUser?.fullName || 'Sistem', createdAt: new Date().toISOString() };
+      await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'sahaPortfoy', portfoy.id), {
+        ziyaretler: [...(portfoy.ziyaretler || []), ziyaret],
+        // Karttaki tarih bu randevuya aitse temizle (bir sonraki randevu için boş kalsın)
+        ...(portfoy.sonrakiRandevu === r.tarih ? { sonrakiRandevu: '' } : {}),
+        hareketGecmisi: [...(portfoy.hareketGecmisi || []), hareket('ziyaret', `Randevu gerçekleştirildi (${r.tarih}${r.saat ? ' ' + r.saat : ''})`)],
+      });
+      addSystemLog?.('Saha Randevu', `${r.firmaAdi} randevusu GİDİLDİ → portföy ziyaret günlüğüne işlendi.`);
+    } catch (e) { console.error(e); alert('Güncellenemedi.'); }
   };
 
   // Durum değiştirme — "Anlaşıldı" seçilirse "bağlayan" olarak işlemi yapan yazılır
@@ -3950,20 +4018,38 @@ export const SahaPortfoyView = ({ personnelList = [], currentUser, addSystemLog,
                       </div>
                     </div>
                     <div className="flex items-center gap-1.5 flex-wrap sm:shrink-0">
-                      {r.durum === 'bekliyor' && (
-                        <>
-                          {/* ANA AKIŞ: görüşme yapıldı → bilgiler hazır dolu portföy formu açılır */}
-                          <button type="button" onClick={() => randevudanPortfoyeEkle(r)}
-                            className="px-3 py-1.5 bg-green-600 hover:bg-green-700 text-white text-[10px] font-black rounded-lg transition whitespace-nowrap flex items-center gap-1">
-                            <CheckCircle className="w-3.5 h-3.5" /> Gidildi → Portföye Ekle
-                          </button>
-                          <button type="button" onClick={() => randevuDurum(r, 'gidildi')}
-                            title="Görüşme yapıldı ama şimdilik portföye eklenmeyecek"
-                            className="px-2.5 py-1.5 bg-white border border-green-400 text-green-700 hover:bg-green-50 text-[10px] font-black rounded-lg transition whitespace-nowrap">Sadece Gidildi</button>
-                          <button type="button" onClick={() => randevuDurum(r, 'iptal')}
-                            className="px-2.5 py-1.5 bg-white border border-neutral-300 text-neutral-500 hover:bg-neutral-100 text-[10px] font-black rounded-lg transition">İptal</button>
-                        </>
-                      )}
+                      {r.durum === 'bekliyor' && (() => {
+                        // DEĞİŞTİ (kullanıcı talebi): seçenekler DURUMA GÖRE sunulur.
+                        //  • Firma zaten portföydeyse tek seçenek: "Gidildi" (portföye
+                        //    ziyaret olarak işlenir) + İptal. "Portföye Ekle" gösterilmez.
+                        //  • Firma portföyde değilse iki seçenek: "Gidildi → Portföye Ekle"
+                        //    veya "Sadece Gidildi" + İptal.
+                        const portfoy = randevununPortfoyu(r);
+                        return (
+                          <>
+                            {portfoy ? (
+                              <button type="button" onClick={() => portfoyRandevusuGidildi(r, portfoy)}
+                                title={`${portfoy.firmaAdi} zaten portföyde — görüşme ziyaret günlüğüne işlenir`}
+                                className="px-3 py-1.5 bg-green-600 hover:bg-green-700 text-white text-[10px] font-black rounded-lg transition whitespace-nowrap flex items-center gap-1">
+                                <CheckCircle className="w-3.5 h-3.5" /> Gidildi
+                              </button>
+                            ) : (
+                              <>
+                                {/* ANA AKIŞ: görüşme yapıldı → bilgiler hazır dolu portföy formu açılır */}
+                                <button type="button" onClick={() => randevudanPortfoyeEkle(r)}
+                                  className="px-3 py-1.5 bg-green-600 hover:bg-green-700 text-white text-[10px] font-black rounded-lg transition whitespace-nowrap flex items-center gap-1">
+                                  <CheckCircle className="w-3.5 h-3.5" /> Gidildi → Portföye Ekle
+                                </button>
+                                <button type="button" onClick={() => randevuDurum(r, 'gidildi')}
+                                  title="Görüşme yapıldı ama şimdilik portföye eklenmeyecek"
+                                  className="px-2.5 py-1.5 bg-white border border-green-400 text-green-700 hover:bg-green-50 text-[10px] font-black rounded-lg transition whitespace-nowrap">Sadece Gidildi</button>
+                              </>
+                            )}
+                            <button type="button" onClick={() => randevuDurum(r, 'iptal')}
+                              className="px-2.5 py-1.5 bg-white border border-neutral-300 text-neutral-500 hover:bg-neutral-100 text-[10px] font-black rounded-lg transition">İptal</button>
+                          </>
+                        );
+                      })()}
                       {r.durum === 'iptal' && (
                         <button type="button" onClick={() => randevuDurum(r, 'bekliyor')}
                           className="px-2.5 py-1.5 bg-white border border-indigo-300 text-indigo-600 hover:bg-indigo-50 text-[10px] font-black rounded-lg transition">Tekrar Aktifleştir</button>
