@@ -6164,6 +6164,46 @@ const nakitYuvarla = (tutar) => {
     };
 
     // Bir kredi defterinin TÜM kalemlerinin toplu durumu
+    // ========================================================================
+    // YENİ (kullanıcı talebi): YAKLAŞAN ÖDEME UYARISI (Ödemeler + Krediler)
+    // ------------------------------------------------------------------------
+    // Defter adının yanında, ÖDENMEMİŞ en yakın vadeye göre yanıp sönen bir
+    // rozet gösterilir:
+    //   • Vadesi geçmiş   -> "2 gün geçti"  (kırmızı, yanıp söner)
+    //   • Bugün           -> "Bugün ödeme"  (kırmızı, yanıp söner)
+    //   • 1-5 gün kaldı   -> "5 gün sonra ödeme" (turuncu, yanıp söner)
+    //   • 5 günden uzak   -> rozet YOK (gereksiz gürültü olmasın)
+    // Ödeme yapıldıkça o vade planda 'odendi' olur ve rozet kendiliğinden bir
+    // sonraki yakın vadeye kayar; hepsi ödenince kaybolur.
+    // Tarih karşılaştırmaları 'YYYY-AA-GG' METİN olarak yapılır — saat dilimi
+    // kayması olmaz (Date nesnesi UTC'ye çevirip günü kaydırabiliyor).
+    // ========================================================================
+    const YAKIN_ODEME_ESIGI_GUN = 5;
+    const gunFarki = (tarihStr, bugunStr_) => {
+      // İki 'YYYY-AA-GG' metni arasındaki gün farkı (UTC ile hesaplanır ki DST etkilemesin)
+      const [y1, m1, g1] = String(tarihStr).split('-').map(Number);
+      const [y2, m2, g2] = String(bugunStr_).split('-').map(Number);
+      if (!y1 || !y2) return null;
+      return Math.round((Date.UTC(y1, m1 - 1, g1) - Date.UTC(y2, m2 - 1, g2)) / 86400000);
+    };
+    // detaylar[].bilgi.plan üzerinden en yakın ÖDENMEMİŞ vadeyi bulur
+    const yakinOdemeUyarisi = (detaylar) => {
+      const bugun = bugunStr();
+      const bekleyenler = (detaylar || [])
+        .flatMap(d => (d.bilgi?.plan || []).filter(p => !p.odendi && p.tarih))
+        .sort((a, b) => String(a.tarih).localeCompare(String(b.tarih)));
+      if (bekleyenler.length === 0) return null;
+      const enYakin = bekleyenler[0];
+      const fark = gunFarki(enYakin.tarih, bugun);
+      if (fark === null) return null;
+      if (fark > YAKIN_ODEME_ESIGI_GUN) return null;           // Henüz uzak — rozet yok
+      const metin = fark < 0 ? `${Math.abs(fark)} gün geçti`
+        : fark === 0 ? 'Bugün ödeme'
+        : fark === 1 ? 'Yarın ödeme'
+        : `${fark} gün sonra ödeme`;
+      return { fark, tarih: enYakin.tarih, tutar: enYakin.kalan ?? enYakin.tutar ?? 0, metin, gecikmis: fark < 0 };
+    };
+
     const krediDefterBilgi = (defter) => {
       const kalemler = krediKalemleri(defter);
       const detaylar = kalemler.map(k => ({ kalem: k, bilgi: krediBilgi(defter, k) }));
@@ -6187,6 +6227,7 @@ const nakitYuvarla = (tutar) => {
         t + d.bilgi.plan.filter(p => p.gecikmis).reduce((s, p) => s + p.kalan, 0), 0);
       return {
         detaylar,
+        yakinOdeme: yakinOdemeUyarisi(detaylar),   // YENİ: yanıp sönen uyarı verisi
         kalemSayisi: kalemler.length,
         toplamBorc: detaylar.reduce((t, d) => t + d.bilgi.kalanBorc, 0),
         toplamAnaPara: detaylar.reduce((t, d) => t + d.bilgi.anaPara, 0),
@@ -6395,7 +6436,8 @@ const nakitYuvarla = (tutar) => {
       const buAyAdet = buAyVadeleri.length;
       const buAyOdenenAdet = buAyVadeleri.filter(p => p.odendi).length;
       return { detaylar, kalemSayisi: kalemler.length, gecikmisAdet, gecikmisTutar, buAyBekleyen,
-               buAyToplam, buAyOdenen, buAyAdet, buAyOdenenAdet };
+               buAyToplam, buAyOdenen, buAyAdet, buAyOdenenAdet,
+               yakinOdeme: yakinOdemeUyarisi(detaylar) };   // YENİ: yanıp sönen uyarı verisi
     };
 
     const odemeDefterleri = defterler.filter(d => d.tur === 'Ödemeler');
@@ -8307,7 +8349,32 @@ const nakitYuvarla = (tutar) => {
                   <div className="flex-1 min-w-0">
                     {/* DEĞİŞTİ (kullanıcı talebi): ad artık KESİLMİYOR — uzun
                         defter adları alt satıra taşarak tam görünür. */}
-                    <div className="font-black text-black text-[15px] leading-tight break-words">{d.ad}</div>
+                    {/* ==========================================================
+                        YENİ (kullanıcı talebi): YAKLAŞAN ÖDEME ROZETİ
+                        Ödemeler ve Krediler defterlerinde, en yakın ÖDENMEMİŞ
+                        vadeye 5 gün veya daha az kaldıysa adın yanında yanıp
+                        sönen rozet çıkar. Gecikmişse kırmızı ("2 gün geçti"),
+                        yaklaşıyorsa turuncu ("5 gün sonra ödeme"). Ödendikçe
+                        bir sonraki vadeye kayar, hepsi bitince kaybolur.
+                        ========================================================== */}
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <span className="font-black text-black text-[15px] leading-tight break-words">{d.ad}</span>
+                      {(() => {
+                        if (d.tur !== 'Ödemeler' && d.tur !== 'Kredi') return null;
+                        const yo = (d.tur === 'Kredi' ? krediDefterBilgi(d) : odemeDefterBilgi(d))?.yakinOdeme;
+                        if (!yo) return null;
+                        return (
+                          <span
+                            title={`En yakın ödeme: ${(yo.tarih || '').split('-').reverse().join('.')} • ₺${paraFmt(yo.tutar)}`}
+                            className={`shrink-0 inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wide animate-pulse ${
+                              yo.gecikmis || yo.fark === 0
+                                ? 'bg-red-600 text-white shadow-sm shadow-red-300'
+                                : 'bg-amber-500 text-white shadow-sm shadow-amber-300'}`}>
+                            <AlertTriangle className="w-2.5 h-2.5" /> {yo.metin}
+                          </span>
+                        );
+                      })()}
+                    </div>
                     {/* DEĞİŞİKLİK: Ham d.tur yerine defterTuruEtiket() — eski kayıtlar da
                         yeni isimle görünür (Cari -> Kredi Kartı, Diğer -> Borçlu). */}
                     <div className="text-[10px] font-bold text-neutral-400 truncate mt-0.5">{defterTuruEtiket(d.tur)} {sonTarih ? `• ${new Date(sonTarih).toLocaleDateString('tr-TR')}` : '• Henüz işlem yok'}</div>
