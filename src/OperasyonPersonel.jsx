@@ -1232,7 +1232,9 @@ import { db, appId, MESAI_STATUS_OPTIONS, isPersonnelVisibleInMonth, isUzaktanCa
                       </td>
                       {weekDays.map((wd) => {
                         // DÜZELTİLDİ: bileşik anahtar ('yıl_ay_gün')
-                        const cell = mesaiData[person.id]?.[mesaiGunAnahtari(wd)];
+                        // DEĞİŞTİ: İşe geri dönen personelde, dönüş tarihinden sonraki
+                        // artık "İB" kayıtları yok sayılır (bkz. birakmaKoduGecersizMi).
+                        const cell = mesaiHucresiCoz(person, wd.dateStr, mesaiData[person.id]?.[mesaiGunAnahtari(wd)]);
                         const st = typeof cell === 'object' && cell !== null ? cell.status : cell;
                         const hr = typeof cell === 'object' && cell !== null ? cell.hours : '';
                         // DÜZELTİLDİ: "bugün" karşılaştırması da yerel tarihle yapılır
@@ -3283,7 +3285,10 @@ export const CalismaProgramiBolumu = ({ program, guncelle, yakaTipi }) => {
     // BİREBİR AYNI koda entegre edildi. Finans tarafında "Ücretsiz İzin"
     // hem 'Üİ' HEM 'İB' (İşi Bıraktı) kodunu kapsıyordu — burada sadece 'Üİ'
     // sayılıyordu, 'İB' eksikti. Artık ikisi de sayılıyor.
-    const periodUcretsizIzinSayisi = personMesaiForPeriod.filter(m => m.code === 'Üİ' || m.code === 'İB').length;
+    // DEĞİŞTİ: İşe geri dönen personelin dönüş sonrası artık 'İB' kayıtları
+    // ücretsiz izin sayılmaz (yoksa maaştan haksız gün kesilirdi).
+    const gecerliIB = (m) => !birakmaKoduGecersizMi(person, `${m.year}-${String(m.month).padStart(2, '0')}-${String(m.day).padStart(2, '0')}`, m.code);
+    const periodUcretsizIzinSayisi = personMesaiForPeriod.filter(m => (m.code === 'Üİ' || m.code === 'İB') && gecerliIB(m)).length;
     // DEĞİŞTİ: "Ücretli İzin" artık TÜM ücretli izin türlerini kapsıyor:
     // Yıllık İzin (Yİ), Bayram İzni (Bİ), Haftalık İzin (Hİ). Öncesinde
     // yalnızca Yıllık İzin (Yİ) sayılıyordu; Bayram/Haftalık izin kodları
@@ -3650,11 +3655,15 @@ export const CalismaProgramiBolumu = ({ program, guncelle, yakaTipi }) => {
                   }
                 }
                 // Dönüş günü ve sonrasındaki "İB" izlerini temizle
+                // HATA DÜZELTMESİ: Karşılaştırma Date nesneleriyle yapılıyordu;
+                // new Date('2026-09-09') UTC gece yarısı (TR'de 03:00) olduğu için
+                // DÖNÜŞ GÜNÜNÜN kendisi "önce" sayılıp temizlenmiyordu. Artık
+                // 'YYYY-AA-GG' metin karşılaştırması yapılıyor (saat dilimsiz).
+                const gunStr = (yy, mm, gg) => `${yy}-${String(mm).padStart(2, '0')}-${String(gg).padStart(2, '0')}`;
                 for (let g = 1; g <= new Date(y, m, 0).getDate(); g++) {
-                  const gunTarih = new Date(y, m - 1, g);
                   const hucre = records[personId][g];
                   const kod = typeof hucre === 'object' && hucre !== null ? hucre.status : hucre;
-                  if (gunTarih >= bit && kod === 'İB') delete records[personId][g];
+                  if (gunStr(y, m, g) >= donusStr && kod === 'İB') delete records[personId][g];
                 }
                 await setDoc(ref, { records, updatedAt: new Date().toISOString() }, { merge: true });
               }
@@ -4126,7 +4135,9 @@ export const CalismaProgramiBolumu = ({ program, guncelle, yakaTipi }) => {
     // Raporlu gün: maaş kaydında manuel override varsa o kullanılır (Finans MaasView ile aynı)
     const financeRaporAuto = financePersonMesai.filter(m => m.code === 'R').length;
     const financeRaporGunSayisi = (financeMonthRow.rapor !== undefined && financeMonthRow.rapor !== '') ? (parseFloat(financeMonthRow.rapor) || 0) : financeRaporAuto;
-    const financeUcretsizGunSayisi = financePersonMesai.filter(m => ['Üİ', 'İB'].includes(m.code)).length; // Ücretsiz izin / işi bıraktı
+    // DEĞİŞTİ: Geri dönen personelin artık 'İB' kayıtları kesintiye girmez
+    const financeUcretsizGunSayisi = financePersonMesai.filter(m => ['Üİ', 'İB'].includes(m.code)
+      && !birakmaKoduGecersizMi(person, `${m.year}-${String(m.month).padStart(2, '0')}-${String(m.day).padStart(2, '0')}`, m.code)).length; // Ücretsiz izin / işi bıraktı
     // YENİ: İŞE GİRİŞ günleri (işe başlangıç tarihinden önceki günler) ücretsiz izin gibi sayılır (maaş tablolarıyla tutarlı)
     let financeIseGirisGunSayisi = 0;
     if (person.startDate) {
@@ -7446,6 +7457,44 @@ export const mesaiDokumanOneki = (personelVeyaYaka) => {
 export const mesaiDokumanAnahtari = (personelVeyaYaka, yil, ay) => `${mesaiDokumanOneki(personelVeyaYaka)}${yil}_${ay}`;
 
 // ============================================================================
+// HATA DÜZELTMESİ (kullanıcı bildirimi): İŞE GERİ DÖNEN PERSONELDE "İB" KALIYOR
+// ============================================================================
+// BELİRTİ: Bir personel işten ayrılınca ayın kalan günlerine "İB (İşi Bıraktı)"
+// yazılıyor. Sonradan işe geri başladığında bu kayıtlar bazı günlerde silinmemiş
+// kalıyor; Mesai Takip'te ve Personel Muhasebe puantajında dönüş gününden sonra
+// da "İşi Bıraktı" görünüyor, normal mesaisi işlenmiyor.
+//
+// İKİ AYRI SEBEP VAR:
+//  1) Temizleme döngüsündeki tarih karşılaştırması saat dilimi kaynaklı kayıyor:
+//     new Date('2026-09-09') UTC gece yarısıdır ve Türkiye'de 03:00'e denk gelir;
+//     new Date(2026, 8, 9) ise yerel gece yarısıdır. Bu yüzden DÖNÜŞ GÜNÜNÜN
+//     kendisi "dönüşten önce" sayılıp temizlenmiyordu. (Aşağıda düzeltildi.)
+//  2) Personel işe geri alma akışı kullanılmadan (ör. kayıt elle Aktif yapılıp
+//     yeni başlangıç tarihi girilerek) döndürülürse eski İB kayıtları hiç
+//     temizlenmiyor.
+//
+// KALICI ÇÖZÜM: Görüntüleme/sayım tarafına koruma konuldu. Personel AKTİF ise
+// ve bakılan gün, güncel işe başlama tarihinden (startDate) sonraysa "İB" kaydı
+// YOK SAYILIR. Böylece veri düzeltmesi beklemeden doğru görünür; QR'dan gelen
+// normal mesai kaydı işlenir. Ayrılış dönemindeki (startDate öncesi) İB
+// kayıtları olduğu gibi kalır — geçmiş bozulmaz.
+// ============================================================================
+export const birakmaKoduGecersizMi = (person, tarihStr, kod) => {
+  if (kod !== 'İB') return false;
+  if (!person || person.employmentStatus === 'Pasif') return false;  // Hâlâ ayrılmışsa geçerli
+  const bas = person.startDate;
+  if (!bas || !tarihStr) return false;
+  return tarihStr >= bas;   // 'YYYY-AA-GG' metin karşılaştırması
+};
+
+// Bir mesai hücresini okurken geçersiz İB'yi eler (hücre yokmuş gibi davranır)
+export const mesaiHucresiCoz = (person, tarihStr, hucre) => {
+  const kod = (typeof hucre === 'object' && hucre !== null) ? hucre.status : hucre;
+  if (birakmaKoduGecersizMi(person, tarihStr, kod)) return null;
+  return hucre;
+};
+
+// ============================================================================
 // YENİ: MESAİ TAKİBİNE KİM DAHİL?
 // Kullanıcı kuralı: "Sadece Beyaz Yakada örgün çalışanların takibi olsun.
 // Uzaktan olanların olmasın. QR Kod Anasayfa ve Mesai Takip Bölümünde
@@ -9434,7 +9483,9 @@ export const MesaiTakipView = ({ personnelList = [], currentUser, jobs = [], onV
   const puantajDurumu = (k) => {
     const [y, a, g] = (k.dateStr || '').split('-').map(Number);
     // DEĞİŞTİ: Beyaz yaka için `beyaz_` önekli doküman okunur (Finans ile aynı kural)
-    const hucre = puantajlar[mesaiDokumanAnahtari(kaydinYakasi(k), y, a)]?.[k.personnelId]?.[g];
+    const hamHucre = puantajlar[mesaiDokumanAnahtari(kaydinYakasi(k), y, a)]?.[k.personnelId]?.[g];
+    // DEĞİŞTİ: İşe geri dönen personelin artık "İB" kaydı yok sayılır
+    const hucre = mesaiHucresiCoz(personnelList.find(p => String(p.id) === String(k.personnelId)), k.dateStr, hamHucre);
     if (!hucre) return null;
     return typeof hucre === 'object' ? hucre : { status: hucre, hours: '', manual: false };
   };
